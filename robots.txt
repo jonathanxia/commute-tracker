@@ -1,0 +1,15 @@
+# This site is personal and should not appear in search results.
+#
+# The authoritative signal is the <meta name="robots" content="noindex"> tag in
+# index.html. Crawling is deliberately ALLOWED here so that crawlers can fetch
+# the page and actually see that tag.
+#
+# Blocking with "Disallow: /" would be counterproductive: a crawler that is not
+# allowed to fetch the page never reads the noindex, so if the URL is ever
+# discovered through a link it can still be indexed as a bare URL. Allowing the
+# crawl and refusing the index is the combination that keeps it out.
+
+User-agent: *
+Allow: /
+
+# No sitemap is published on purpose.

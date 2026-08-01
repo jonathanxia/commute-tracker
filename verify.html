@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+<title>Seed verification</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 24px; background: #0c0f14; color: #e6edf6;
+    font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  h1 { font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: #8b97a8; margin: 0 0 16px; }
+  #verdict { font-size: 18px; font-weight: 700; padding: 12px 16px; border-radius: 10px; margin-bottom: 18px; }
+  .pass { background: #12301d; color: #6ee7a0; border: 1px solid #1f5c38; }
+  .fail { background: #33161a; color: #ff9d9d; border: 1px solid #6d2730; }
+  table { border-collapse: collapse; font-size: 12.5px; margin-top: 16px; }
+  th, td { border: 1px solid #222a36; padding: 4px 9px; text-align: right; white-space: nowrap; }
+  th { color: #8b97a8; font-weight: 600; text-align: right; background: #131922; }
+  td:nth-child(2), td:nth-child(3), td:nth-child(5) { text-align: left; }
+  .blank { color: #4a5666; }
+  ul { padding-left: 20px; }
+  li { margin-bottom: 4px; }
+  .note { color: #f3c969; }
+</style>
+</head>
+<body>
+<h1>Commute Logger — seed round-trip check</h1>
+<div id="verdict">running…</div>
+<div id="detail"></div>
+<div id="table"></div>
+
+<script type="module">
+import { runVerification } from './tools/verify-seed.js';
+
+const verdict = document.getElementById('verdict');
+const detail = document.getElementById('detail');
+const tableEl = document.getElementById('table');
+
+const res = await fetch('seed.local.json', { cache: 'no-store' });
+if (!res.ok) {
+  verdict.className = 'fail';
+  verdict.textContent = 'seed.local.json not found — copy seed.example.json to seed.local.json.';
+} else {
+  const result = runVerification(await res.json());
+  verdict.className = result.pass ? 'pass' : 'fail';
+  verdict.textContent = result.pass
+    ? `PASS — ${result.checked} cells match the seed table exactly.`
+    : `FAIL — ${result.failures.length} of ${result.checked} cells differ.`;
+
+  const bits = [];
+  if (result.notes.length) {
+    bits.push('<ul>' + result.notes.map((n) => `<li class="note">note: ${n.message}</li>`).join('') + '</ul>');
+  }
+  if (!result.pass) {
+    bits.push('<ul>' + result.failures.map((f) =>
+      `<li>row ${f.row} · <b>${f.column}</b>: expected ${f.expected}, got ${f.actual}</li>`).join('') + '</ul>');
+  }
+  detail.innerHTML = bits.join('');
+
+  const cell = (v) => (v === '' ? '<td class="blank">·</td>' : `<td>${v}</td>`);
+  tableEl.innerHTML =
+    '<table><thead><tr>' + result.header.map((h) => `<th>${h}</th>`).join('') + '</tr></thead><tbody>' +
+    result.actual.map((r) => '<tr>' + r.map(cell).join('') + '</tr>').join('') +
+    '</tbody></table>';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# Real commute data. This repo is published on public GitHub Pages, and these
+# rows carry real dates and times of day. Keep them local.
+seed.local.json
+
+# Local backups dropped into the repo folder
+commute-backup-*.json
+commutes-*.csv
+
+.DS_Store
+.claude/settings.local.json
