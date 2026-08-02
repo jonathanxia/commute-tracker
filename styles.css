@@ -305,7 +305,7 @@ textarea { min-height: 110px; resize: vertical; font-size: 13px; font-family: ui
 
 .lap-btn {
   width: 100%;
-  min-height: 148px;
+  min-height: 132px;
   border-radius: 22px;
   background: var(--accent);
   color: var(--accent-ink);
@@ -316,8 +316,25 @@ textarea { min-height: 110px; resize: vertical; font-size: 13px; font-family: ui
   transition: transform 0.06s ease, background 0.12s ease;
 }
 .lap-btn:active { transform: scale(0.98); background: #2571dd; }
-.lap-btn[data-final='true'] { background: var(--good); }
-.lap-btn[data-final='true']:active { background: #0a8c0a; }
+
+/* Always present next to LAP, never a mode the app switches into. */
+.end-btn {
+  width: 100%;
+  min-height: 62px;
+  border-radius: 16px;
+  background: var(--surface-3);
+  color: var(--ink);
+  border: 1px solid var(--border-strong);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  transition: transform 0.06s ease, background 0.12s ease;
+}
+.end-btn:active { transform: scale(0.985); background: #2c3849; }
+
+/* Bigger tap targets than the filter chips — these get used while walking. */
+.chip-lg { min-height: 40px; padding: 0 14px; font-size: 14.5px; }
+.chip-new { border-style: dashed; color: var(--ink-2); }
 
 .queue { display: flex; flex-direction: column; gap: 2px; }
 .queue-item {

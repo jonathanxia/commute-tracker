@@ -23,6 +23,9 @@ export const BUILTIN_TYPES = [
   { key: 'garage_wait', label: 'Garage wait', short: 'garage' },
   { key: 'drive', label: 'Drive', short: 'drive' },
   { key: 'walk_to_dest', label: 'Walk to dest', short: 'walk→dest' },
+  // Recorded and exported like any other segment, but excluded from
+  // door-to-door by default: a coffee stop shouldn't make the commute look slow.
+  { key: 'pause', label: 'Pause', short: 'pause', exclude: true },
 ];
 
 /**
@@ -82,7 +85,12 @@ export function loadTypes() {
     if (!t || typeof t.key !== 'string' || !t.key || seen.has(t.key)) continue;
     seen.add(t.key);
     const label = typeof t.label === 'string' && t.label.trim() ? t.label.trim() : humanizeKey(t.key);
-    list.push({ key: t.key, label, short: typeof t.short === 'string' && t.short ? t.short : label });
+    list.push({
+      key: t.key,
+      label,
+      short: typeof t.short === 'string' && t.short ? t.short : label,
+      exclude: t.exclude === true,
+    });
   }
   // The drive type is load-bearing; re-add it if a bad edit or an old backup
   // dropped it, rather than letting residuals silently go blank forever.
@@ -106,6 +114,31 @@ export function segmentLabel(key) {
 
 export function segmentShort(key) {
   return loadTypes().find((t) => t.key === key)?.short ?? humanizeKey(key).toLowerCase();
+}
+
+/** Types flagged this way are recorded and exported but left out of door2door. */
+export function typeExcluded(key) {
+  return loadTypes().find((t) => t.key === key)?.exclude === true;
+}
+
+/**
+ * Append a new type, deriving a unique snake_case key from the label.
+ * Shared by the recorder's inline creator and the management screen so both
+ * produce identical keys.
+ */
+export function addType(label) {
+  const types = loadTypes();
+  const clean = String(label).trim();
+  if (!clean) return null;
+  let key = slugifyKey(clean);
+  const taken = new Set(types.map((t) => t.key));
+  if (taken.has(key)) {
+    let i = 2;
+    while (taken.has(`${key}_${i}`)) i += 1;
+    key = `${key}_${i}`;
+  }
+  saveTypes([...types, { key, label: clean, short: clean.toLowerCase(), exclude: false }]);
+  return key;
 }
 
 /**
@@ -289,12 +322,34 @@ export function arriveTs(trip) {
 }
 
 /**
- * Sum of every recorded segment. Blank for an incomplete trip — we never emit a
- * total that looks complete but isn't.
+ * Door-to-door minutes. Blank for an incomplete trip — we never emit a total
+ * that looks complete but isn't.
+ *
+ * Segment types flagged `exclude` (pause, by default) are skipped, so a trip
+ * where you stopped for coffee stays comparable with one where you didn't. That
+ * means door2door is NOT always the sum of the segment columns; when an excluded
+ * segment is present the columns will add up to more.
  */
 export function door2doorMin(trip) {
   if (isIncomplete(trip)) return null;
-  return trip.segments.reduce((acc, s) => acc + segDurationMin(s), 0);
+  return trip.segments.reduce(
+    (acc, s) => (typeExcluded(s.type) ? acc : acc + segDurationMin(s)),
+    0,
+  );
+}
+
+/**
+ * The type to pre-select for the next segment: the next step in this direction's
+ * suggested order, else the first suggested type not used yet. Only a guess —
+ * the pills on the recorder are the real control.
+ */
+export function predictNextType(trip, direction) {
+  const seq = sequenceFor(direction);
+  const current = trip.segments.at(-1)?.type;
+  const i = seq.indexOf(current);
+  if (i !== -1 && i + 1 < seq.length) return seq[i + 1];
+  const used = new Set(trip.segments.map((s) => s.type));
+  return seq.find((k) => !used.has(k)) ?? current ?? seq[0];
 }
 
 /**
@@ -455,8 +510,9 @@ export function saveTrips(trips) {
 }
 
 /**
- * The in-progress session: the trip so far, the planned sequence, which segment
- * is running, and whether it has been finished but not yet saved.
+ * The in-progress session: the trip so far, and whether it has been ended but
+ * not yet saved. There is no planned queue — you lap as many times as you like
+ * and label each segment as it happens.
  *
  * Persisted on every single tap. iOS will happily kill a backgrounded web app
  * during a 40-minute drive, and losing a commute to that would defeat the point
@@ -465,12 +521,7 @@ export function saveTrips(trips) {
 export function loadActive() {
   const raw = readJSON(KEYS.active, null);
   if (!raw || !raw.trip) return null;
-  return {
-    trip: normalizeTrip(raw.trip),
-    queue: Array.isArray(raw.queue) ? raw.queue.filter((t) => typeof t === 'string' && t) : [],
-    index: Number.isInteger(raw.index) ? raw.index : 0,
-    finished: raw.finished === true,
-  };
+  return { trip: normalizeTrip(raw.trip), finished: raw.finished === true };
 }
 
 export function saveActive(session) {

@@ -15,10 +15,15 @@ recomputed from the stored timestamp each tick.
 
 Three screens:
 
-- **Track** — one tap to start, one big button to lap at each transition, one to finish.
-  Direction is guessed from the clock (before 13:00 → east) and overridable. The
-  in-progress trip is written to storage on *every* tap, so iOS killing the app mid-commute
-  loses nothing.
+- **Track** — one tap to start. Two buttons from then on: **LAP** at each transition and
+  **END TRIP** when you arrive. Lap never runs out and never ends the trip; tap it as many
+  times as the trip actually has transitions. Each lap locks the timestamp immediately and
+  starts a new segment with a guessed type, which you correct with the pills whenever you
+  like — labelling it thirty seconds later costs nothing, because the time is already
+  recorded. The pill row is the whole type menu, including **+ New** to invent a type
+  mid-commute. Direction is guessed from the clock (before 13:00 → east) and overridable.
+  The in-progress trip is written to storage on *every* tap, so iOS killing the app
+  mid-commute loses nothing.
 - **History** — newest first, tap to open the editor. Manual entry for typing a past trip
   from durations. Export, backup and the segment-type editor live here.
 - **Data** — filters, a sortable table with a column picker, and three charts. Filters drive
@@ -38,6 +43,15 @@ vocabulary — deleted, or restored from another device — still gets a column 
 
 `drive` is the one key with semantics: `drive_residual` is defined as that segment minus the
 Google prediction, and two charts plot it, so it can be renamed but not deleted.
+
+Each type has a **leave out of door-to-door** switch, on by default for `pause`. Such a
+segment is still recorded and still gets its own CSV column — it just isn't counted in the
+total, so a trip where you stopped for coffee stays comparable with one where you didn't.
+**Consequence: `door2door` is not always the sum of the segment columns.** When an excluded
+segment is present the columns add up to more.
+
+Default sequences (Segments → each direction) are only the guess for which pill to
+pre-select next. They constrain nothing — the recorder is free-form.
 
 **The wide CSV therefore has a variable column count.** Read it by header name, not by position.
 

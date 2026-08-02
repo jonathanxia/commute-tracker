@@ -12,10 +12,11 @@ import {
   loadTypes,
   saveSequences,
   saveTypes,
+  addType,
+  predictNextType,
   segmentLabel,
   segmentTypes,
   sequenceFor,
-  slugifyKey,
   createSegment,
   createTrip,
   door2doorMin,
@@ -46,7 +47,7 @@ import { renderDataView } from './table.js';
 
 export const state = {
   trips: [],
-  active: null, // { trip, queue, index, finished }
+  active: null, // { trip, finished }
   prefs: loadPrefs(),
   route: { name: 'track' },
   tick: null,
@@ -106,41 +107,39 @@ export function toast(message) {
 function startTrip() {
   const now = Date.now();
   const direction = guessDirection(now);
-  const queue = [...sequenceFor(direction)];
   const trip = createTrip({ depart_ts: now, direction, date: dateKey(now) });
-  trip.segments = [createSegment(queue[0], now, null)];
-  state.active = { trip, queue, index: 0, finished: false };
+  trip.segments = [createSegment(sequenceFor(direction)[0], now, null)];
+  state.active = { trip, finished: false };
   saveActive(state.active);
   go({ name: 'track' });
 }
 
-/** Close the running segment and open the next one at the same instant. */
+/**
+ * Close the running segment and open the next one at the same instant.
+ *
+ * Lap never ends the trip and never runs out — tap it as many times as the trip
+ * actually has transitions. The new segment gets a guessed type immediately, and
+ * you correct it with the pills whenever you like: the timestamp was locked at
+ * the tap, so labelling it thirty seconds later costs nothing.
+ */
 function lap() {
   const s = state.active;
   if (!s || s.finished) return;
   const now = Date.now();
   const current = s.trip.segments[s.trip.segments.length - 1];
   if (current) current.end_ts = now;
-
-  if (s.index + 1 < s.queue.length) {
-    s.index += 1;
-    s.trip.segments.push(createSegment(s.queue[s.index], now, null));
-    saveActive(s);
-    render();
-  } else {
-    finishTrip();
-  }
+  s.trip.segments.push(createSegment(predictNextType(s.trip, s.trip.direction), now, null));
+  saveActive(s);
+  render();
 }
 
 /** Close whatever is running and move to review. Never discards anything. */
-function finishTrip() {
+function endTrip() {
   const s = state.active;
   if (!s) return;
   const now = Date.now();
   const current = s.trip.segments[s.trip.segments.length - 1];
   if (current && current.end_ts == null) current.end_ts = now;
-  // Anything still queued behind us simply never happened — absent, not zero.
-  s.queue = s.queue.slice(0, s.index + 1);
   s.finished = true;
   saveActive(s);
   go({ name: 'review' });
@@ -161,22 +160,6 @@ function discardDraft() {
   state.active = null;
   saveActive(null);
   go({ name: 'track' });
-}
-
-function relabelCurrent(type) {
-  const s = state.active;
-  if (!s) return;
-  s.trip.segments[s.trip.segments.length - 1].type = type;
-  s.queue[s.index] = type;
-  saveActive(s);
-  render();
-}
-
-function setQueue(queue) {
-  const s = state.active;
-  s.queue = queue;
-  saveActive(s);
-  render();
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +229,7 @@ function trackView() {
 
   const s = state.active;
   const current = s.trip.segments[s.trip.segments.length - 1];
-  const isFinal = s.index === s.queue.length - 1;
+  const done = s.trip.segments.slice(0, -1);
 
   return h(
     'div',
@@ -288,7 +271,7 @@ function trackView() {
     h(
       'div',
       { class: 'card', style: { textAlign: 'center', paddingTop: '20px', paddingBottom: '18px' } },
-      h('div', { class: 'eyebrow' }, `Segment ${s.index + 1} of ${s.queue.length}`),
+      h('div', { class: 'eyebrow' }, `Segment ${s.trip.segments.length} · running`),
       h('div', { class: 'now-label', style: { marginTop: '6px' } }, segmentLabel(current.type)),
       h('div', { class: 'now-elapsed', id: 'elapsed', style: { marginTop: '10px' } }, '0:00'),
       h(
@@ -296,99 +279,152 @@ function trackView() {
         { class: 'muted', style: { fontSize: '12.5px', marginTop: '8px' } },
         `started ${fmtClock(current.start_ts)} · departed ${fmtClock(s.trip.depart_ts)}`,
       ),
-      // Relabel-on-the-fly: one tap, no menu.
-      h(
-        'div',
-        { class: 'row wrap gap-sm', style: { justifyContent: 'center', marginTop: '12px' } },
-        ...segmentTypes().map((t) =>
-          h(
-            'button',
-            {
-              class: 'chip',
-              type: 'button',
-              'aria-pressed': String(t === current.type),
-              onclick: () => relabelCurrent(t),
-            },
-            segmentLabel(t),
-          ),
-        ),
-      ),
     ),
 
-    h(
-      'button',
-      {
-        class: 'lap-btn',
-        type: 'button',
-        'data-final': String(isFinal),
-        onclick: lap,
-      },
-      isFinal ? 'FINISH' : 'LAP',
-    ),
+    // The type menu for whatever is running right now. Always visible, so
+    // there is never a hidden mode — tap a pill and the current segment
+    // becomes that. Timestamps are untouched by relabelling.
+    typePicker(current.type, (t) => {
+      current.type = t;
+      saveActive(s);
+      render();
+    }),
 
-    h(
-      'div',
-      { class: 'card' },
-      h('div', { class: 'eyebrow' }, 'Sequence'),
-      h(
-        'div',
-        { class: 'queue', style: { marginTop: '8px' } },
-        ...s.queue.map((type, i) =>
+    // Two buttons, always. Lap never runs out and never ends the trip.
+    h('button', { class: 'lap-btn', type: 'button', onclick: lap }, 'LAP'),
+    h('button', { class: 'end-btn', type: 'button', onclick: endTrip }, 'END TRIP'),
+
+    done.length
+      ? h(
+          'div',
+          { class: 'card' },
+          h('div', { class: 'eyebrow' }, `Recorded (${done.length})`),
           h(
             'div',
-            {
-              class: 'queue-item',
-              'data-state': i < s.index ? 'done' : i === s.index ? 'current' : 'next',
-            },
-            h('span', { class: 'queue-badge' }),
-            h('span', { class: 'grow' }, segmentLabel(type)),
-            i < s.index
-              ? h(
+            { class: 'queue', style: { marginTop: '8px' } },
+            ...done.map((seg, i) =>
+              h(
+                'div',
+                { class: 'queue-item', 'data-state': 'done' },
+                h('span', { class: 'queue-badge' }),
+                h('span', { class: 'grow' }, `${i + 1}. ${segmentLabel(seg.type)}`),
+                h(
                   'span',
-                  { class: 'num muted', style: { fontSize: '13px' } },
-                  fmtMinHuman((s.trip.segments[i].end_ts - s.trip.segments[i].start_ts) / 60000),
-                )
-              : null,
-            i > s.index
-              ? h(
-                  'button',
-                  {
-                    class: 'btn btn-ghost btn-icon',
-                    type: 'button',
-                    'aria-label': `Remove ${segmentLabel(type)}`,
-                    onclick: () => setQueue(s.queue.filter((_, j) => j !== i)),
-                  },
-                  '×',
-                )
-              : null,
+                  { class: 'num', style: { fontSize: '13px' } },
+                  fmtMinHuman((seg.end_ts - seg.start_ts) / 60000),
+                ),
+              ),
+            ),
           ),
-        ),
-      ),
-      h(
-        'div',
-        { class: 'row wrap gap-sm', style: { marginTop: '10px' } },
-        h('span', { class: 'muted', style: { fontSize: '12px' } }, 'Add:'),
-        ...segmentTypes().map((t) =>
           h(
-            'button',
-            { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => setQueue([...s.queue, t]) },
-            `+ ${segmentLabel(t)}`,
+            'div',
+            { class: 'muted', style: { fontSize: '12px', marginTop: '8px' } },
+            'Anything mislabelled is fixable on the review screen after you end the trip.',
           ),
-        ),
-      ),
-    ),
+        )
+      : null,
 
-    h(
-      'button',
-      { class: 'btn btn-ghost btn-block', type: 'button', onclick: finishTrip },
-      'End trip here',
-    ),
     h(
       'button',
       { class: 'btn btn-ghost btn-block btn-danger', type: 'button', onclick: discardDraft },
       'Discard trip',
     ),
   );
+}
+
+// Inline new-type entry state for the recorder's picker.
+let creatingType = false;
+let newTypeDraft = '';
+
+/**
+ * The segment-type menu: every type as a pill, plus inline creation.
+ *
+ * Creating a type here is the same action as creating one on the management
+ * screen — same key derivation, same storage — so a type invented mid-commute
+ * is a first-class type everywhere afterwards.
+ */
+function typePicker(selected, onPick) {
+  if (creatingType) {
+    return h(
+      'div',
+      { class: 'card card-tight' },
+      h('div', { class: 'eyebrow' }, 'New segment type'),
+      h(
+        'div',
+        { class: 'row gap-sm', style: { marginTop: '8px' } },
+        h('input', {
+          class: 'input-sm grow',
+          id: 'new-type-input',
+          placeholder: 'e.g. Toll booth',
+          value: newTypeDraft,
+          autofocus: true,
+          oninput: (e) => {
+            newTypeDraft = e.target.value;
+          },
+          onkeydown: (e) => {
+            if (e.key === 'Enter') e.target.blur(), commitNewType(onPick);
+          },
+        }),
+        h('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: () => commitNewType(onPick) }, 'Add'),
+        h(
+          'button',
+          {
+            class: 'btn btn-ghost btn-sm',
+            type: 'button',
+            onclick: () => {
+              creatingType = false;
+              newTypeDraft = '';
+              render();
+            },
+          },
+          'Cancel',
+        ),
+      ),
+    );
+  }
+
+  return h(
+    'div',
+    { class: 'card card-tight' },
+    h(
+      'div',
+      { class: 'row wrap gap-sm' },
+      ...segmentTypes().map((t) =>
+        h(
+          'button',
+          {
+            class: 'chip chip-lg',
+            type: 'button',
+            'aria-pressed': String(t === selected),
+            onclick: () => onPick(t),
+          },
+          segmentLabel(t),
+        ),
+      ),
+      h(
+        'button',
+        {
+          class: 'chip chip-lg chip-new',
+          type: 'button',
+          onclick: () => {
+            creatingType = true;
+            newTypeDraft = '';
+            render();
+          },
+        },
+        '+ New',
+      ),
+    ),
+  );
+}
+
+function commitNewType(onPick) {
+  const key = addType(newTypeDraft);
+  creatingType = false;
+  newTypeDraft = '';
+  if (!key) return render();
+  onPick(key);
+  toast('Type added');
 }
 
 function lastTripSummary() {
@@ -543,18 +579,12 @@ function segmentsView() {
     render();
   };
 
-  const addType = () => {
+  const add = () => {
     const label = newTypeLabel.trim();
     if (!label) return toast('Give it a name first');
-    let key = slugifyKey(label);
-    const taken = new Set(types.map((t) => t.key));
-    if (taken.has(key)) {
-      let i = 2;
-      while (taken.has(`${key}_${i}`)) i += 1;
-      key = `${key}_${i}`;
-    }
     newTypeLabel = '';
-    commitTypes([...types, { key, label, short: label.toLowerCase() }]);
+    addType(label);
+    render();
     toast(`Added "${label}"`);
   };
 
@@ -617,6 +647,28 @@ function segmentsView() {
             ),
           ),
           h(
+            'label',
+            { class: 'row', style: { gap: '10px', marginTop: '10px' } },
+            h('input', {
+              type: 'checkbox',
+              checked: t.exclude === true,
+              onchange: (e) =>
+                commitTypes(
+                  types.map((x) => (x.key === t.key ? { ...x, exclude: e.target.checked } : x)),
+                ),
+            }),
+            h(
+              'span',
+              { class: 'grow', style: { fontSize: '13.5px' } },
+              h('span', null, 'Leave out of door-to-door'),
+              h(
+                'span',
+                { class: 'muted', style: { display: 'block', fontSize: '12px' } },
+                'Still recorded and still gets its own CSV column — just not counted in the total.',
+              ),
+            ),
+          ),
+          h(
             'div',
             { class: 'row', style: { marginTop: '8px' } },
             isDrive
@@ -660,7 +712,7 @@ function segmentsView() {
             newTypeLabel = e.target.value;
           },
         }),
-        h('button', { class: 'btn btn-sm', type: 'button', onclick: addType }, 'Add'),
+        h('button', { class: 'btn btn-sm', type: 'button', onclick: add }, 'Add'),
       ),
     ),
 
