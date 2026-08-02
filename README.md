@@ -53,7 +53,12 @@ segment is present the columns add up to more.
 Default sequences (Segments → each direction) are only the guess for which pill to
 pre-select next. They constrain nothing — the recorder is free-form.
 
-**The wide CSV therefore has a variable column count.** Read it by header name, not by position.
+### Commute types
+
+A separate, trip-level vocabulary — "Full Driving", "Ferry", "Bus Commute" — created the same
+way and editable at runtime. Set it on the recorder or in the trip editor; filter by it on the
+Data page. Trips can be left uncategorised, and "Uncategorised" is itself a filter option so
+they never become invisible.
 
 ### Two distinctions the whole thing rests on
 
@@ -135,27 +140,38 @@ A web page can't write to disk. Two different mechanisms are at work:
   **iOS** performs the write, to a destination you pick in the share sheet. The app never
   learns the path.
 
-So: back up. `Back up JSON` is lossless with raw timestamps and is the only thing that can
-fully rebuild your data — the CSV rounds to 2 decimals. A banner nags you when it's been
-10 trips or 14 days.
+So: back up. A banner nags you when it's been 10 trips or 14 days.
 
-## Exports
+## Export
 
-- **CSV** — one row per trip, the human-scannable format. With the default vocabulary:
-  `trip, date, dow, depart, direction, gmaps_pred, arrive, walk_to_car, garage_wait, drive, walk_to_dest, door2door, drive_residual`
-  The block between `arrive` and `door2door` is one column per segment type, so it grows when
-  you add a type. Parse by header name.
-- **Segment CSV** — one row per segment with raw timestamps, lossless.
-- **JSON backup / restore.** Carries the segment vocabulary and default sequences alongside the
-  trips, so a restore on a fresh device doesn't leave custom segments unnamed.
+**JSON only.** There is no CSV, on purpose: it was a second, lossy representation of data the
+app already holds, and keeping it in sync with a runtime-editable vocabulary was work with
+nothing to show for it. The JSON is the actual data — raw timestamps, nothing rounded, plus
+the segment and commute vocabularies needed to read it back:
+
+```json
+{ "app": "commute-logger", "version": 3, "exported_at": 0,
+  "types": [...], "commute_types": [...], "sequences": {...}, "trips": [...] }
+```
+
+Anything tabular is one line away on the Mac:
+
+```python
+import json, pandas as pd
+d = json.load(open("commute-backup.json"))
+pd.json_normalize(d["trips"], "segments", ["date", "direction", "commute_type"])
+```
+
+Restore takes the same file, by picker or pasted text, and merges unknown segment and commute
+types so nothing arrives unnamed.
 
 `drive_residual` (`drive − gmaps_pred`) is **never stored**. It's derived at render and
 export time, like `dow`, `arrive`, and `door2door`.
 
 ## Verifying the seed
 
-`verify.html` round-trips `seed.local.json` through the model and the CSV writer and diffs
-the result cell-by-cell against the source table. Open <http://localhost:8123/verify.html>,
+`verify.html` round-trips `seed.local.json` through the model and diffs every derived value
+cell-by-cell against the source table. Open <http://localhost:8123/verify.html>,
 or with node:
 
 ```sh
@@ -176,7 +192,6 @@ Two things this catches, both of which silently corrupt the export:
 index.html            shell
 styles.css            dark theme
 js/store.js           model, derivations, persistence   (DOM-free)
-js/csv.js             CSV writers                       (DOM-free)
 js/format.js          formatting                        (DOM-free)
 js/seed.js            seed table -> timestamped trips
 js/app.js             routing, lap flow, history, export
@@ -189,7 +204,7 @@ tools/make-icons.py   generates the PNGs (stdlib only, no Pillow)
 tools/verify-seed.*   the seed round-trip check
 ```
 
-`store.js`, `csv.js` and `format.js` stay DOM-free so the verifier can import them outside a
+`store.js` and `format.js` stay DOM-free so the verifier can import them outside a
 browser. Bump `CACHE_VERSION` in `sw.js` when you change any file listed in its `SHELL`.
 
 ## Deliberately not here

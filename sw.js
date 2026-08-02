@@ -5,7 +5,7 @@
 // Bump CACHE_VERSION whenever you change any file below, or the phone will keep
 // serving the old copy.
 
-const CACHE_VERSION = 'commute-v6';
+const CACHE_VERSION = 'commute-v8';
 
 const SHELL = [
   '.',
@@ -17,7 +17,6 @@ const SHELL = [
   'icons/apple-touch-icon.png',
   'js/app.js',
   'js/store.js',
-  'js/csv.js',
   'js/seed.js',
   'js/format.js',
   'js/dom.js',

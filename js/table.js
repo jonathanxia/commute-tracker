@@ -2,10 +2,10 @@
 // charts. Filters drive the table, the charts and the export from here, so what
 // you see is what you get.
 
-import { chronological, columnTypes, segmentShort, tripView } from './store.js';
+import { chronological, columnTypes, loadCommuteTypes, segmentLabel, tripView } from './store.js';
 import { dateKey, dowOf, fmtClock, fmtMin, fmtSigned } from './format.js';
 import { h } from './dom.js';
-import { CHART_KEYS, chartCard } from './charts.js';
+import { CHART_KEYS, chartCard, chartWantsSegment } from './charts.js';
 import { exportTrips, go, render, state, toast, updatePrefs } from './app.js';
 
 const DOWS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -27,6 +27,13 @@ function buildColumns(trips) {
     { key: 'depart', label: 'depart', text: (r) => fmtClock(r.depart_ts), sort: (r) => r.depart_ts % 86400000 },
     { key: 'direction', label: 'dir', align: 'left', text: (r) => r.direction, sort: (r) => r.direction },
     {
+      key: 'commute_type',
+      label: 'commute',
+      align: 'left',
+      text: (r) => r.commute_type_label,
+      sort: (r) => r.commute_type_label || null,
+    },
+    {
       key: 'gmaps_pred',
       label: 'google',
       text: (r) => (r.gmaps_pred_min == null ? '' : String(r.gmaps_pred_min)),
@@ -37,7 +44,7 @@ function buildColumns(trips) {
 
   const segments = columnTypes(trips).map((key) => ({
     key,
-    label: segmentShort(key),
+    label: segmentLabel(key),
     text: (r) => fmtMin(r.min[key]),
     sort: (r) => r.min[key] ?? null,
   }));
@@ -65,6 +72,9 @@ function applyFilters(trips, f) {
     if (f.from && t.date < f.from) return false;
     if (f.to && t.date > f.to) return false;
     if (f.incompleteOnly && !tripView(t).incomplete) return false;
+    // '' in the list means "no commute type set", so uncategorised trips stay
+    // selectable rather than being invisible once any filter is on.
+    if (f.commuteTypes?.length && !f.commuteTypes.includes(t.commute_type || '')) return false;
     return true;
   });
 }
@@ -150,13 +160,17 @@ function rangeRow() {
 // otherwise push every actual row below the fold on a phone.
 let panelOpen = false;
 
+// Which segment type the spread chart plots.
+let chartSegment = 'drive';
+
 function activeFilterCount(f) {
   return (
     (f.direction !== 'all' ? 1 : 0) +
     f.dows.length +
     (f.from ? 1 : 0) +
     (f.to ? 1 : 0) +
-    (f.incompleteOnly ? 1 : 0)
+    (f.incompleteOnly ? 1 : 0) +
+    (f.commuteTypes?.length || 0)
   );
 }
 
@@ -229,6 +243,30 @@ function filtersCard() {
             onclick: () => setFilter({ incompleteOnly: !f.incompleteOnly }),
           },
           'Incomplete only',
+        ),
+      ),
+      h(
+        'div',
+        { class: 'row wrap gap-sm' },
+        h('span', { class: 'field-label', style: { alignSelf: 'center' } }, 'Commute'),
+        ...[...loadCommuteTypes(), { key: '', label: 'Uncategorised' }].map((ct) =>
+          h(
+            'button',
+            {
+              class: 'chip',
+              type: 'button',
+              'aria-pressed': String((f.commuteTypes || []).includes(ct.key)),
+              onclick: () => {
+                const cur = f.commuteTypes || [];
+                setFilter({
+                  commuteTypes: cur.includes(ct.key)
+                    ? cur.filter((k) => k !== ct.key)
+                    : [...cur, ct.key],
+                });
+              },
+            },
+            ct.label,
+          ),
         ),
       ),
       h(
@@ -453,7 +491,7 @@ export function renderDataView() {
   }
 
   const filterActive =
-    f.direction !== 'all' || f.dows.length > 0 || f.from || f.to || f.incompleteOnly;
+    f.direction !== 'all' || f.dows.length > 0 || f.from || f.to || f.incompleteOnly || (f.commuteTypes?.length > 0);
 
   return h(
     'div',
@@ -487,7 +525,8 @@ export function renderDataView() {
             {
               class: 'btn btn-ghost btn-sm',
               type: 'button',
-              onclick: () => setFilter({ direction: 'all', dows: [], from: '', to: '', incompleteOnly: false }),
+              onclick: () =>
+                setFilter({ direction: 'all', dows: [], from: '', to: '', incompleteOnly: false, commuteTypes: [] }),
             },
             'Clear filters',
           )
@@ -502,6 +541,33 @@ export function renderDataView() {
           ? dataTable(rows, cols)
           : cardList(rows, cols),
 
-    h('div', { class: wide ? 'charts-grid' : '', style: { marginTop: '12px' } }, ...CHART_KEYS.map((k) => chartCard(k, rows))),
+    // Which segment type the spread chart plots. Anything else uses its own.
+    h(
+      'div',
+      { class: 'row wrap gap-sm', style: { marginTop: '16px', marginBottom: '4px' } },
+      h('span', { class: 'field-label', style: { alignSelf: 'center' } }, 'Chart segment'),
+      ...columnTypes(state.trips).map((key) =>
+        h(
+          'button',
+          {
+            class: 'chip',
+            type: 'button',
+            'aria-pressed': String(chartSegment === key),
+            onclick: () => {
+              chartSegment = key;
+              render();
+            },
+          },
+          segmentLabel(key),
+        ),
+      ),
+    ),
+    h(
+      'div',
+      { class: wide ? 'charts-grid' : '', style: { marginTop: '12px' } },
+      ...CHART_KEYS.map((k) =>
+        chartCard(k, rows, chartWantsSegment(k) ? { segment: chartSegment } : {}),
+      ),
+    ),
   );
 }

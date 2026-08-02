@@ -1,5 +1,5 @@
-// Formatting helpers. DOM-free on purpose so csv.js and the seed verifier can
-// import this outside a browser.
+// Formatting helpers. DOM-free on purpose so the seed verifier can import this
+// outside a browser.
 
 const pad = (n, w = 2) => String(n).padStart(w, '0');
 

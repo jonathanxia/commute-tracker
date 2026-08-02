@@ -24,7 +24,7 @@ import {
 } from './store.js';
 import { dateKey, dowOf, fmtClock, fmtMin, fmtMinHuman, fmtSigned, inputToTs, tsToInput, dateStrToTs } from './format.js';
 import { h } from './dom.js';
-import { go, render, state, toast, upsertTrip } from './app.js';
+import { commuteTypePicker, go, render, state, toast, upsertTrip } from './app.js';
 
 function field(label, input) {
   return h('label', { class: 'field grow' }, h('span', { class: 'field-label' }, label), input);
@@ -152,6 +152,15 @@ export function renderTripEditor(trip, opts) {
           trip.direction = d;
           commit();
         })),
+        h(
+          'div',
+          { class: 'full' },
+          h('div', { class: 'field-label', style: { marginBottom: '6px' } }, 'Commute type'),
+          commuteTypePicker(trip.commute_type, (key) => {
+            trip.commute_type = key;
+            commit();
+          }),
+        ),
         h(
           'label',
           { class: 'full row', style: { gap: '10px' } },

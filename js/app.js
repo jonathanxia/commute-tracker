@@ -8,8 +8,12 @@ import {
   DIRECTIONS,
   DIRECTION_LABELS,
   DRIVE_KEY,
+  addCommuteType,
+  commuteTypeLabel,
+  loadCommuteTypes,
   loadSequences,
   loadTypes,
+  saveCommuteTypes,
   saveSequences,
   saveTypes,
   addType,
@@ -35,7 +39,6 @@ import {
   normalizeTrip,
 } from './store.js';
 import { fetchSeed, rowsToTrips } from './seed.js';
-import { longCSV, wideCSV } from './csv.js';
 import { dateKey, fmtElapsed, fmtMin, fmtMinHuman, fmtSigned, dowOf, fmtClock } from './format.js';
 import { $, clear, h, mount } from './dom.js';
 import { renderTripEditor, renderManualAdd } from './editor.js';
@@ -44,6 +47,8 @@ import { renderDataView } from './table.js';
 // ---------------------------------------------------------------------------
 // state
 // ---------------------------------------------------------------------------
+
+export const BUILD = 'v8';
 
 export const state = {
   trips: [],
@@ -281,6 +286,17 @@ function trackView() {
       ),
     ),
 
+    h(
+      'div',
+      { class: 'card card-tight' },
+      h('div', { class: 'field-label', style: { marginBottom: '7px' } }, 'Commute type'),
+      commuteTypePicker(s.trip.commute_type, (key) => {
+        s.trip.commute_type = key;
+        saveActive(s);
+        render();
+      }),
+    ),
+
     // The type menu for whatever is running right now. Always visible, so
     // there is never a hidden mode — tap a pill and the current segment
     // becomes that. Timestamps are untouched by relabelling.
@@ -328,6 +344,88 @@ function trackView() {
       'button',
       { class: 'btn btn-ghost btn-block btn-danger', type: 'button', onclick: discardDraft },
       'Discard trip',
+    ),
+  );
+}
+
+let creatingCommuteType = false;
+let newCommuteDraft = '';
+
+/**
+ * Commute-type chips: which kind of commute this was. Tapping the selected one
+ * clears it, so "not categorised" stays reachable without a separate control.
+ */
+export function commuteTypePicker(selected, onPick) {
+  if (creatingCommuteType) {
+    return h(
+      'div',
+      { class: 'row gap-sm' },
+      h('input', {
+        class: 'input-sm grow',
+        id: 'new-commute-input',
+        placeholder: 'e.g. Ferry',
+        value: newCommuteDraft,
+        oninput: (e) => {
+          newCommuteDraft = e.target.value;
+        },
+      }),
+      h(
+        'button',
+        {
+          class: 'btn btn-sm btn-primary',
+          type: 'button',
+          onclick: () => {
+            const key = addCommuteType(newCommuteDraft);
+            creatingCommuteType = false;
+            newCommuteDraft = '';
+            if (key) onPick(key);
+            else render();
+          },
+        },
+        'Add',
+      ),
+      h(
+        'button',
+        {
+          class: 'btn btn-ghost btn-sm',
+          type: 'button',
+          onclick: () => {
+            creatingCommuteType = false;
+            newCommuteDraft = '';
+            render();
+          },
+        },
+        'Cancel',
+      ),
+    );
+  }
+  return h(
+    'div',
+    { class: 'row wrap gap-sm' },
+    ...loadCommuteTypes().map((t) =>
+      h(
+        'button',
+        {
+          class: 'chip',
+          type: 'button',
+          'aria-pressed': String(t.key === selected),
+          onclick: () => onPick(t.key === selected ? null : t.key),
+        },
+        t.label,
+      ),
+    ),
+    h(
+      'button',
+      {
+        class: 'chip chip-new',
+        type: 'button',
+        onclick: () => {
+          creatingCommuteType = true;
+          newCommuteDraft = '';
+          render();
+        },
+      },
+      '+ New',
     ),
   );
 }
@@ -471,6 +569,41 @@ function paintElapsed() {
 // History
 // ---------------------------------------------------------------------------
 
+/**
+ * Measured geometry, printed in the History footer.
+ *
+ * iOS standalone mode cannot be reproduced in a desktop browser — there is no
+ * way to emulate the safe-area insets or the web view's actual bounds. So the
+ * app measures itself: if `view` height is smaller than `screen` height while
+ * the safe insets read 0, the viewport is not covering the screen and anything
+ * pinned to the bottom will float above it.
+ */
+function layoutReport() {
+  let top = 0;
+  let bottom = 0;
+  try {
+    const probe = document.createElement('div');
+    probe.style.cssText =
+      'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;' +
+      'padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)';
+    document.body.appendChild(probe);
+    const cs = getComputedStyle(probe);
+    top = Math.round(parseFloat(cs.paddingTop) || 0);
+    bottom = Math.round(parseFloat(cs.paddingBottom) || 0);
+    probe.remove();
+  } catch {
+    /* measurement is best-effort */
+  }
+  const standalone =
+    (typeof matchMedia !== 'undefined' && matchMedia('(display-mode: standalone)').matches) ||
+    navigator.standalone === true;
+  return (
+    `build ${BUILD} · view ${window.innerWidth}×${window.innerHeight} · ` +
+    `screen ${screen.width}×${screen.height} · safe ${top}/${bottom} · ` +
+    (standalone ? 'standalone' : 'browser')
+  );
+}
+
 function backupIsStale() {
   const { lastBackupAt, backupNagDismissedAt } = state.prefs;
   if (!state.trips.length) return false;
@@ -518,6 +651,16 @@ function historyView() {
     trips.length
       ? h('div', null, ...trips.map(tripRow))
       : h('div', { class: 'empty' }, 'No trips yet. Tap Track to log one, or add a past trip.'),
+
+    // Build marker plus measured layout. iOS standalone mode can't be reproduced
+    // in a desktop browser, so the app reports its own geometry instead: a stale
+    // cache or a viewport that doesn't cover the screen is then visible at a
+    // glance rather than something to guess at.
+    h(
+      'div',
+      { class: 'muted', style: { fontSize: '10.5px', textAlign: 'center', padding: '14px 0 2px', lineHeight: '1.5' } },
+      layoutReport(),
+    ),
   );
 }
 
@@ -599,8 +742,8 @@ function segmentsView() {
       h(
         'div',
         { class: 'muted', style: { fontSize: '12.5px', margin: '6px 0 12px' } },
-        'Name is what you see while lapping; column is the CSV and table header. ' +
-          'Renaming never touches a stored trip — trips reference a fixed key, not the name.',
+        'One name each — it is the pill while lapping, the table header and the CSV header. ' +
+          'Renaming never touches a stored trip.',
       ),
       ...types.map((t) => {
         const usage = typeUsage(t.key);
@@ -610,40 +753,21 @@ function segmentsView() {
           { class: 'seg-edit' },
           h(
             'div',
-            { class: 'row-between' },
-            h('code', { class: 'muted', style: { fontSize: '11.5px' } }, t.key),
+            { class: 'row gap-sm' },
+            h('input', {
+              class: 'input-sm grow',
+              value: t.label,
+              'aria-label': 'Segment name',
+              onchange: (e) => {
+                const v = e.target.value.trim();
+                if (!v) return render();
+                commitTypes(types.map((x) => (x.key === t.key ? { ...x, label: v } : x)));
+              },
+            }),
             h(
               'span',
-              { class: 'muted', style: { fontSize: '11.5px' } },
+              { class: 'muted', style: { fontSize: '11.5px', whiteSpace: 'nowrap' } },
               usage ? `${usage} recorded` : 'unused',
-            ),
-          ),
-          h(
-            'div',
-            { class: 'seg-grid' },
-            field(
-              'Name',
-              h('input', {
-                class: 'input-sm',
-                value: t.label,
-                onchange: (e) => {
-                  const v = e.target.value.trim();
-                  if (!v) return render();
-                  commitTypes(types.map((x) => (x.key === t.key ? { ...x, label: v } : x)));
-                },
-              }),
-            ),
-            field(
-              'Column',
-              h('input', {
-                class: 'input-sm',
-                value: t.short,
-                onchange: (e) => {
-                  const v = e.target.value.trim();
-                  if (!v) return render();
-                  commitTypes(types.map((x) => (x.key === t.key ? { ...x, short: v } : x)));
-                },
-              }),
             ),
           ),
           h(
@@ -853,28 +977,34 @@ function stamp() {
   return `${dateKey(d.getTime())}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+/**
+ * The one export format. JSON is the actual data — lossless, with raw
+ * timestamps and the vocabularies needed to read it back. Anything tabular is
+ * one line of pandas away, so there is no second format to keep in sync.
+ */
+export function exportPayload(trips) {
+  return {
+    app: 'commute-logger',
+    version: 3,
+    exported_at: Date.now(),
+    types: loadTypes(),
+    commute_types: loadCommuteTypes(),
+    sequences: loadSequences(),
+    trips,
+  };
+}
+
 export function exportTrips(trips, { label = 'commutes' } = {}) {
-  return shareOrDownload(`${label}-${stamp()}.csv`, 'text/csv', wideCSV(trips));
+  return shareOrDownload(
+    `${label}-${stamp()}.json`,
+    'application/json',
+    JSON.stringify(exportPayload(trips), null, 2),
+  );
 }
 
 function backupView() {
   const trips = state.trips;
-  // Types and sequences ride along: without them a restore on a fresh device
-  // would leave every custom segment orphaned with no definition.
-  const jsonText = () =>
-    JSON.stringify(
-      {
-        app: 'commute-logger',
-        version: 2,
-        exported_at: Date.now(),
-        types: loadTypes(),
-        sequences: loadSequences(),
-        trips,
-      },
-      null,
-      2,
-    );
-
+  const jsonText = () => JSON.stringify(exportPayload(trips), null, 2);
   const markBackedUp = () => updatePrefs({ lastBackupAt: Date.now(), backupNagDismissedAt: null });
 
   return h(
@@ -883,11 +1013,13 @@ function backupView() {
     h(
       'div',
       { class: 'card' },
-      h('div', { class: 'eyebrow' }, 'CSV — one row per trip'),
+      h('div', { class: 'eyebrow' }, 'Export'),
       h(
         'div',
         { class: 'muted', style: { fontSize: '13px', margin: '6px 0 12px' } },
-        'The human-scannable format. Rounded to 2 decimals, so it is not a full backup.',
+        'JSON is the only format, because it is the actual data: raw timestamps, ' +
+          'nothing rounded, plus the segment and commute vocabularies needed to read it. ' +
+          'Anything tabular is one line of pandas away.',
       ),
       h(
         'div',
@@ -898,62 +1030,14 @@ function backupView() {
             class: 'btn btn-primary',
             type: 'button',
             onclick: async () => {
-              const how = await exportTrips(trips);
-              if (how !== 'cancelled') toast(how === 'shared' ? 'Shared' : 'Downloaded');
-            },
-          },
-          'Export CSV',
-        ),
-        h(
-          'button',
-          {
-            class: 'btn',
-            type: 'button',
-            onclick: async () => toast((await copyText(wideCSV(trips))) ? 'CSV copied' : 'Copy failed'),
-          },
-          'Copy CSV',
-        ),
-        h(
-          'button',
-          {
-            class: 'btn btn-ghost',
-            type: 'button',
-            onclick: async () => {
-              const how = await shareOrDownload(`commutes-segments-${stamp()}.csv`, 'text/csv', longCSV(trips));
-              if (how !== 'cancelled') toast(how === 'shared' ? 'Shared' : 'Downloaded');
-            },
-          },
-          'Segment CSV',
-        ),
-      ),
-    ),
-
-    h(
-      'div',
-      { class: 'card' },
-      h('div', { class: 'eyebrow' }, 'JSON backup'),
-      h(
-        'div',
-        { class: 'muted', style: { fontSize: '13px', margin: '6px 0 12px' } },
-        'Lossless, with raw timestamps. This is the one that can rebuild everything if iOS clears storage or the home-screen icon is deleted.',
-      ),
-      h(
-        'div',
-        { class: 'row wrap gap-sm' },
-        h(
-          'button',
-          {
-            class: 'btn btn-primary',
-            type: 'button',
-            onclick: async () => {
-              const how = await shareOrDownload(`commute-backup-${stamp()}.json`, 'application/json', jsonText());
+              const how = await exportTrips(trips, { label: 'commute-backup' });
               if (how === 'cancelled') return;
               markBackedUp();
-              toast('Backed up');
+              toast(how === 'shared' ? 'Shared' : 'Downloaded');
               render();
             },
           },
-          'Back up JSON',
+          'Export JSON',
         ),
         h(
           'button',
@@ -963,7 +1047,7 @@ function backupView() {
             onclick: async () => {
               if (await copyText(jsonText())) {
                 markBackedUp();
-                toast('Backup copied');
+                toast('Copied');
                 render();
               } else toast('Copy failed');
             },
@@ -1010,6 +1094,13 @@ function restoreCard() {
         if (t?.key && !byKey.has(t.key)) byKey.set(t.key, t);
       }
       saveTypes([...byKey.values()]);
+    }
+    if (Array.isArray(parsed?.commute_types) && parsed.commute_types.length) {
+      const byKey = new Map(loadCommuteTypes().map((t) => [t.key, t]));
+      for (const t of parsed.commute_types) {
+        if (t?.key && !byKey.has(t.key)) byKey.set(t.key, t);
+      }
+      saveCommuteTypes([...byKey.values()]);
     }
     if (mode === 'replace' && parsed?.sequences) saveSequences(parsed.sequences);
 

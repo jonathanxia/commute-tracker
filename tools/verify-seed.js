@@ -1,20 +1,42 @@
 // Round-trip check: do the seed rows survive being turned into timestamped
-// trips and exported back out as the wide CSV?
+// trips and read back out as the values the app displays and exports?
 //
 // This is the highest-value test in the project. It catches the two things that
-// silently corrupt the export: door2door totals that were summed before
-// rounding (five of the eight rows disagree with the sum of their own printed
-// segments), and HH:MM times that must round to the nearest minute rather than
-// truncate (four rows break if you truncate).
+// silently corrupt the data: door2door totals that were summed before rounding
+// (five of the eight rows disagree with the sum of their own printed segments),
+// and HH:MM times that must round to the nearest minute rather than truncate
+// (four rows break if you truncate).
+//
+// It reads tripView directly. There is no CSV layer any more — JSON is the only
+// export format, and the numbers below are exactly what lands in it.
 //
 // Shared by tools/verify-seed.mjs (node) and verify.html (browser).
 
 import { rowsToTrips, rowIssues } from '../js/seed.js';
-import { wideRows, wideColumns } from '../js/csv.js';
-import { fmtMin } from '../js/format.js';
-import { columnTypes } from '../js/store.js';
+import { chronological, columnTypes, segmentLabel, tripView } from '../js/store.js';
+import { fmtClock, fmtMin, fmtSigned } from '../js/format.js';
 
-/** The row as the source table states it, rendered into CSV cells. */
+const LEAD = ['trip', 'date', 'dow', 'depart', 'direction', 'gmaps_pred', 'arrive'];
+const TAIL = ['door2door', 'drive_residual'];
+
+/** The values the app derives for a trip, in a fixed order for comparison. */
+function actualCells(trip, n, segments) {
+  const v = tripView(trip, n);
+  return [
+    String(v.n),
+    v.date,
+    v.dow,
+    fmtClock(v.depart_ts),
+    v.direction,
+    v.gmaps_pred_min == null ? '' : String(v.gmaps_pred_min),
+    fmtClock(v.arrive_ts),
+    ...segments.map((t) => fmtMin(v.min[t])),
+    fmtMin(v.door2door),
+    fmtSigned(v.drive_residual),
+  ];
+}
+
+/** The same values as the source table states them. */
 function expectedCells(row, n, segments) {
   return [
     String(n),
@@ -35,10 +57,10 @@ export function runVerification(seed) {
   const failures = [];
   const notes = rowIssues(rows).map((m) => ({ kind: 'note', message: m }));
 
-  const trips = rowsToTrips(rows);
-  const header = wideColumns(trips);
+  const trips = chronological(rowsToTrips(rows));
   const segments = columnTypes(trips);
-  const actual = wideRows(trips).map((cells) => cells.map((c) => String(c)));
+  const header = [...LEAD, ...segments.map(segmentLabel), ...TAIL];
+  const actual = trips.map((trip, i) => actualCells(trip, i + 1, segments));
 
   if (actual.length !== rows.length) {
     failures.push({
@@ -80,9 +102,9 @@ export function formatReport(result) {
   const lines = [];
   for (const n of result.notes) lines.push(`note: ${n.message}`);
   if (result.pass) {
-    lines.push(`PASS — ${result.checked} cells match the seed table exactly.`);
+    lines.push(`PASS — ${result.checked} values match the seed table exactly.`);
   } else {
-    lines.push(`FAIL — ${result.failures.length} of ${result.checked} cells differ:`);
+    lines.push(`FAIL — ${result.failures.length} of ${result.checked} values differ:`);
     for (const f of result.failures) {
       lines.push(`  row ${f.row} · ${f.column}: expected ${f.expected}, got ${f.actual}`);
     }

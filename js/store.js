@@ -18,14 +18,20 @@ import { dateKey, dowOf } from './format.js';
 // A type has a STABLE key and an editable label. Trips store the key, so
 // renaming "Garage wait" to "Valet" never touches a single stored trip.
 
+// One name per type, used everywhere: the pill, the big label on the recorder,
+// the table header and the CSV header. There is no second "column name" to keep
+// in sync, because maintaining a mapping is work with nothing to show for it.
+//
+// `key` is derived from the name once, at creation, and never shown or typed.
+// It exists only so renaming a type doesn't have to rewrite stored trips.
 export const BUILTIN_TYPES = [
-  { key: 'walk_to_car', label: 'Walk to car', short: 'walk→car' },
-  { key: 'garage_wait', label: 'Garage wait', short: 'garage' },
-  { key: 'drive', label: 'Drive', short: 'drive' },
-  { key: 'walk_to_dest', label: 'Walk to dest', short: 'walk→dest' },
+  { key: 'walk_to_car', label: 'Walk to car' },
+  { key: 'garage_wait', label: 'Garage wait' },
+  { key: 'drive', label: 'Drive' },
+  { key: 'walk_to_dest', label: 'Walk to dest' },
   // Recorded and exported like any other segment, but excluded from
   // door-to-door by default: a coffee stop shouldn't make the commute look slow.
-  { key: 'pause', label: 'Pause', short: 'pause', exclude: true },
+  { key: 'pause', label: 'Pause', exclude: true },
 ];
 
 /**
@@ -40,6 +46,16 @@ export const BUILTIN_SEQUENCES = {
   west: ['walk_to_car', 'garage_wait', 'drive', 'walk_to_dest'],
 };
 
+/**
+ * Commute types: a trip-level category, distinct from segment types. Same
+ * pattern — one typed name, a derived stable key, editable at runtime.
+ */
+export const BUILTIN_COMMUTE_TYPES = [
+  { key: 'full_driving', label: 'Full Driving' },
+  { key: 'ferry', label: 'Ferry' },
+  { key: 'bus_commute', label: 'Bus Commute' },
+];
+
 export const DIRECTIONS = ['east', 'west'];
 
 export const DIRECTION_LABELS = {
@@ -53,6 +69,7 @@ export const KEYS = {
   prefs: 'ct.prefs.v1',
   types: 'ct.types.v1',
   sequences: 'ct.sequences.v1',
+  commuteTypes: 'ct.commute_types.v1',
 };
 
 /** "garage_wait" -> "Garage wait". Fallback label for a key with no definition. */
@@ -85,12 +102,7 @@ export function loadTypes() {
     if (!t || typeof t.key !== 'string' || !t.key || seen.has(t.key)) continue;
     seen.add(t.key);
     const label = typeof t.label === 'string' && t.label.trim() ? t.label.trim() : humanizeKey(t.key);
-    list.push({
-      key: t.key,
-      label,
-      short: typeof t.short === 'string' && t.short ? t.short : label,
-      exclude: t.exclude === true,
-    });
+    list.push({ key: t.key, label, exclude: t.exclude === true });
   }
   // The drive type is load-bearing; re-add it if a bad edit or an old backup
   // dropped it, rather than letting residuals silently go blank forever.
@@ -112,9 +124,8 @@ export function segmentLabel(key) {
   return loadTypes().find((t) => t.key === key)?.label ?? humanizeKey(key);
 }
 
-export function segmentShort(key) {
-  return loadTypes().find((t) => t.key === key)?.short ?? humanizeKey(key).toLowerCase();
-}
+/** Kept as an alias: the display name is also the column name. */
+export const segmentShort = segmentLabel;
 
 /** Types flagged this way are recorded and exported but left out of door2door. */
 export function typeExcluded(key) {
@@ -137,7 +148,51 @@ export function addType(label) {
     while (taken.has(`${key}_${i}`)) i += 1;
     key = `${key}_${i}`;
   }
-  saveTypes([...types, { key, label: clean, short: clean.toLowerCase(), exclude: false }]);
+  saveTypes([...types, { key, label: clean, exclude: false }]);
+  return key;
+}
+
+let commuteCache = null;
+
+export function loadCommuteTypes() {
+  if (commuteCache) return commuteCache;
+  const raw = readJSON(KEYS.commuteTypes, null);
+  const source = Array.isArray(raw) ? raw : BUILTIN_COMMUTE_TYPES;
+  const seen = new Set();
+  commuteCache = [];
+  for (const t of source) {
+    if (!t || typeof t.key !== 'string' || !t.key || seen.has(t.key)) continue;
+    seen.add(t.key);
+    commuteCache.push({
+      key: t.key,
+      label: typeof t.label === 'string' && t.label.trim() ? t.label.trim() : humanizeKey(t.key),
+    });
+  }
+  return commuteCache;
+}
+
+export function saveCommuteTypes(list) {
+  commuteCache = null;
+  return writeJSON(KEYS.commuteTypes, list);
+}
+
+export function commuteTypeLabel(key) {
+  if (!key) return '';
+  return loadCommuteTypes().find((t) => t.key === key)?.label ?? humanizeKey(key);
+}
+
+export function addCommuteType(label) {
+  const list = loadCommuteTypes();
+  const clean = String(label).trim();
+  if (!clean) return null;
+  let key = slugifyKey(clean);
+  const taken = new Set(list.map((t) => t.key));
+  if (taken.has(key)) {
+    let i = 2;
+    while (taken.has(`${key}_${i}`)) i += 1;
+    key = `${key}_${i}`;
+  }
+  saveCommuteTypes([...list, { key, label: clean }]);
   return key;
 }
 
@@ -208,6 +263,7 @@ export function createTrip({
   date = dateKey(depart_ts),
   segments = [],
   incomplete = false,
+  commute_type = null,
 } = {}) {
   return {
     id: uid('t'),
@@ -216,6 +272,7 @@ export function createTrip({
     depart_ts,
     gmaps_pred_min,
     incomplete,
+    commute_type,
     segments: segments.map(normalizeSegment),
   };
 }
@@ -251,6 +308,7 @@ export function normalizeTrip(trip) {
     depart_ts,
     gmaps_pred_min: numOrNull(trip.gmaps_pred_min),
     incomplete: trip.incomplete === true,
+    commute_type: typeof trip.commute_type === 'string' && trip.commute_type ? trip.commute_type : null,
     segments: Array.isArray(trip.segments) ? trip.segments.map(normalizeSegment) : [],
   };
 }
@@ -272,6 +330,7 @@ export function tripFromDurations({
   gmaps_pred_min = null,
   durations = [],
   incomplete = false,
+  commute_type = null,
 }) {
   let cursor = depart_ts;
   const segments = [];
@@ -282,7 +341,7 @@ export function tripFromDurations({
     cursor += ms;
   }
   return {
-    ...createTrip({ depart_ts, direction, gmaps_pred_min, date, incomplete }),
+    ...createTrip({ depart_ts, direction, gmaps_pred_min, date, incomplete, commute_type }),
     segments,
   };
 }
@@ -435,6 +494,8 @@ export function tripView(trip, index = null) {
     dow: dowOf(trip.date),
     depart_ts: trip.depart_ts,
     direction: trip.direction,
+    commute_type: trip.commute_type ?? null,
+    commute_type_label: commuteTypeLabel(trip.commute_type),
     gmaps_pred_min: trip.gmaps_pred_min,
     arrive_ts: arriveTs(trip),
     min,
@@ -538,7 +599,7 @@ export const DEFAULT_PREFS = {
   // exactly the papercut this whole refactor exists to remove.
   hiddenColumns: [],
   sort: { key: 'depart_ts', dir: 'desc' },
-  filters: { direction: 'all', dows: [], from: '', to: '', incompleteOnly: false },
+  filters: { direction: 'all', dows: [], from: '', to: '', incompleteOnly: false, commuteTypes: [] },
   chart: 'drive',
   lastBackupAt: null,
   backupNagDismissedAt: null,

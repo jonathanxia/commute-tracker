@@ -6,6 +6,7 @@
 
 import { h, svg } from './dom.js';
 import { fmtClock, fmtMin, fmtSigned } from './format.js';
+import { segmentLabel } from './store.js';
 
 /** Read the palette from CSS so styles.css stays the single source of truth. */
 function palette() {
@@ -239,16 +240,20 @@ function median(xs) {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-function distribution(rows, width) {
+function distribution(rows, width, segKey = 'drive') {
   const p = palette();
+  const segName = segmentLabel(segKey);
+  const pick = (r, key) => (key === 'door2door' ? r.door2door : r.min?.[key]);
   const groups = [
-    { key: 'drive', dir: 'east', label: 'Drive · East' },
-    { key: 'drive', dir: 'west', label: 'Drive · West' },
+    { key: segKey, dir: 'east', label: `${segName} · East` },
+    { key: segKey, dir: 'west', label: `${segName} · West` },
     { key: 'door2door', dir: 'east', label: 'Door to door · East' },
     { key: 'door2door', dir: 'west', label: 'Door to door · West' },
   ].map((g) => ({
     ...g,
-    values: rows.filter((r) => r.direction === g.dir && r[g.key] != null).map((r) => r[g.key]),
+    values: rows
+      .filter((r) => r.direction === g.dir && pick(r, g.key) != null)
+      .map((r) => pick(r, g.key)),
   }));
 
   const all = groups.flatMap((g) => g.values);
@@ -432,6 +437,7 @@ const CHARTS = {
     title: 'Spread by direction',
     sub: 'Minutes. Every trip as a dot, with the median.',
     draw: distribution,
+    segmentPicker: true,
   },
   timeofday: {
     title: 'Departure time vs drive',
@@ -444,7 +450,7 @@ const CHARTS = {
  * Charts redraw against their measured width, so a phone gets phone-sized type
  * rather than a shrunken desktop chart.
  */
-export function chartCard(key, rows) {
+export function chartCard(key, rows, opts = {}) {
   const spec = CHARTS[key];
   const holder = h('div', { style: { marginTop: '10px' } });
   const card = h(
@@ -460,7 +466,14 @@ export function chartCard(key, rows) {
     const w = Math.round(holder.clientWidth || card.clientWidth - 24);
     if (w <= 0 || Math.abs(w - last) < 2) return;
     last = w;
-    holder.replaceChildren(spec.draw(rows, w));
+    try {
+      holder.replaceChildren(spec.draw(rows, w, opts.segment));
+    } catch (err) {
+      // A throw inside a ResizeObserver callback is easy to lose; make it loud
+      // and leave a visible note rather than a silently blank card.
+      console.error('[charts] failed to draw', key, err);
+      holder.replaceChildren(emptyNote('Chart failed to draw — see console.'));
+    }
   };
 
   if (typeof ResizeObserver !== 'undefined') {
@@ -472,3 +485,4 @@ export function chartCard(key, rows) {
 }
 
 export const CHART_KEYS = Object.keys(CHARTS);
+export const chartWantsSegment = (key) => CHARTS[key]?.segmentPicker === true;
