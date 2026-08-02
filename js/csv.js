@@ -1,24 +1,23 @@
 // CSV generation. DOM-free so the seed verifier can import it under node.
 
-import { chronological, segDurationMin, tripView } from './store.js';
+import { chronological, columnTypes, segDurationMin, tripView } from './store.js';
 import { fmtClock, fmtMin, fmtSigned } from './format.js';
 
-/** Wide format: one row per trip. Column order is fixed by the spec. */
-export const WIDE_COLUMNS = [
-  'trip',
-  'date',
-  'dow',
-  'depart',
-  'direction',
-  'gmaps_pred',
-  'arrive',
-  'walk_to_car',
-  'garage_wait',
-  'drive',
-  'walk_to_dest',
-  'door2door',
-  'drive_residual',
-];
+/** Columns before and after the per-segment block. */
+const LEAD_COLUMNS = ['trip', 'date', 'dow', 'depart', 'direction', 'gmaps_pred', 'arrive'];
+const TAIL_COLUMNS = ['door2door', 'drive_residual'];
+
+/**
+ * The wide header for a given set of trips.
+ *
+ * The segment block is generated from the current vocabulary plus any type the
+ * data itself still uses, so adding a segment type adds a column and deleting
+ * one does not drop already-recorded data. Read this file by header name rather
+ * than by position — the column count is no longer fixed.
+ */
+export function wideColumns(trips = []) {
+  return [...LEAD_COLUMNS, ...columnTypes(trips), ...TAIL_COLUMNS];
+}
 
 function escapeCell(value) {
   const s = value == null ? '' : String(value);
@@ -41,6 +40,7 @@ function toCSV(rows) {
  * a filtered export numbers 1..n over the filtered rows.
  */
 export function wideRows(trips) {
+  const types = columnTypes(trips);
   return chronological(trips).map((trip, i) => {
     const v = tripView(trip, i + 1);
     return [
@@ -51,10 +51,7 @@ export function wideRows(trips) {
       v.direction,
       v.gmaps_pred_min == null ? '' : String(v.gmaps_pred_min),
       fmtClock(v.arrive_ts),
-      fmtMin(v.walk_to_car),
-      fmtMin(v.garage_wait),
-      fmtMin(v.drive),
-      fmtMin(v.walk_to_dest),
+      ...types.map((key) => fmtMin(v.min[key])),
       fmtMin(v.door2door),
       fmtSigned(v.drive_residual),
     ];
@@ -62,7 +59,7 @@ export function wideRows(trips) {
 }
 
 export function wideCSV(trips) {
-  return toCSV([WIDE_COLUMNS, ...wideRows(trips)]);
+  return toCSV([wideColumns(trips), ...wideRows(trips)]);
 }
 
 /**

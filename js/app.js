@@ -5,10 +5,17 @@
 // absolute timestamp to storage before anything else happens.
 
 import {
-  DEFAULT_SEQUENCE,
   DIRECTIONS,
-  SEGMENT_LABELS,
-  SEGMENT_TYPES,
+  DIRECTION_LABELS,
+  DRIVE_KEY,
+  loadSequences,
+  loadTypes,
+  saveSequences,
+  saveTypes,
+  segmentLabel,
+  segmentTypes,
+  sequenceFor,
+  slugifyKey,
   createSegment,
   createTrip,
   door2doorMin,
@@ -97,7 +104,7 @@ export function toast(message) {
 function startTrip() {
   const now = Date.now();
   const direction = guessDirection(now);
-  const queue = [...DEFAULT_SEQUENCE[direction]];
+  const queue = [...sequenceFor(direction)];
   const trip = createTrip({ depart_ts: now, direction, date: dateKey(now) });
   trip.segments = [createSegment(queue[0], now, null)];
   state.active = { trip, queue, index: 0, finished: false };
@@ -219,7 +226,7 @@ function trackView() {
             h(
               'div',
               { class: 'muted', style: { fontSize: '12.5px' } },
-              `${DEFAULT_SEQUENCE[guess].length} segments · guessed from the clock, change it after you start`,
+              `${sequenceFor(guess).length} segments · guessed from the clock, change it after you start`,
             ),
           ),
         ),
@@ -280,7 +287,7 @@ function trackView() {
       'div',
       { class: 'card', style: { textAlign: 'center', paddingTop: '20px', paddingBottom: '18px' } },
       h('div', { class: 'eyebrow' }, `Segment ${s.index + 1} of ${s.queue.length}`),
-      h('div', { class: 'now-label', style: { marginTop: '6px' } }, SEGMENT_LABELS[current.type]),
+      h('div', { class: 'now-label', style: { marginTop: '6px' } }, segmentLabel(current.type)),
       h('div', { class: 'now-elapsed', id: 'elapsed', style: { marginTop: '10px' } }, '0:00'),
       h(
         'div',
@@ -291,7 +298,7 @@ function trackView() {
       h(
         'div',
         { class: 'row wrap gap-sm', style: { justifyContent: 'center', marginTop: '12px' } },
-        ...SEGMENT_TYPES.map((t) =>
+        ...segmentTypes().map((t) =>
           h(
             'button',
             {
@@ -300,7 +307,7 @@ function trackView() {
               'aria-pressed': String(t === current.type),
               onclick: () => relabelCurrent(t),
             },
-            SEGMENT_LABELS[t],
+            segmentLabel(t),
           ),
         ),
       ),
@@ -332,7 +339,7 @@ function trackView() {
               'data-state': i < s.index ? 'done' : i === s.index ? 'current' : 'next',
             },
             h('span', { class: 'queue-badge' }),
-            h('span', { class: 'grow' }, SEGMENT_LABELS[type]),
+            h('span', { class: 'grow' }, segmentLabel(type)),
             i < s.index
               ? h(
                   'span',
@@ -346,7 +353,7 @@ function trackView() {
                   {
                     class: 'btn btn-ghost btn-icon',
                     type: 'button',
-                    'aria-label': `Remove ${SEGMENT_LABELS[type]}`,
+                    'aria-label': `Remove ${segmentLabel(type)}`,
                     onclick: () => setQueue(s.queue.filter((_, j) => j !== i)),
                   },
                   '×',
@@ -359,11 +366,11 @@ function trackView() {
         'div',
         { class: 'row wrap gap-sm', style: { marginTop: '10px' } },
         h('span', { class: 'muted', style: { fontSize: '12px' } }, 'Add:'),
-        ...SEGMENT_TYPES.map((t) =>
+        ...segmentTypes().map((t) =>
           h(
             'button',
             { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => setQueue([...s.queue, t]) },
-            `+ ${SEGMENT_LABELS[t]}`,
+            `+ ${segmentLabel(t)}`,
           ),
         ),
       ),
@@ -465,8 +472,9 @@ function historyView() {
     h(
       'div',
       { class: 'row', style: { marginBottom: '12px' } },
-      h('button', { class: 'btn grow', type: 'button', onclick: () => go({ name: 'manual' }) }, '+ Add past trip'),
+      h('button', { class: 'btn grow', type: 'button', onclick: () => go({ name: 'manual' }) }, '+ Past trip'),
       h('button', { class: 'btn grow', type: 'button', onclick: () => go({ name: 'backup' }) }, 'Export'),
+      h('button', { class: 'btn grow', type: 'button', onclick: () => go({ name: 'segments' }) }, 'Segments'),
     ),
 
     trips.length
@@ -507,6 +515,247 @@ function tripRow(trip) {
       h('span', null, d2d == null ? 'no total' : 'min'),
     ),
   );
+}
+
+// ---------------------------------------------------------------------------
+// segment types + default sequences
+// ---------------------------------------------------------------------------
+
+/** How many recorded segments use a type. Deleting one in use would lose data. */
+function typeUsage(key) {
+  return state.trips.reduce((n, t) => n + t.segments.filter((s) => s.type === key).length, 0);
+}
+
+let newTypeLabel = '';
+
+function segmentsView() {
+  const types = loadTypes();
+  const sequences = loadSequences();
+
+  const commitTypes = (list) => {
+    saveTypes(list);
+    render();
+  };
+  const commitSeq = (next) => {
+    saveSequences(next);
+    render();
+  };
+
+  const addType = () => {
+    const label = newTypeLabel.trim();
+    if (!label) return toast('Give it a name first');
+    let key = slugifyKey(label);
+    const taken = new Set(types.map((t) => t.key));
+    if (taken.has(key)) {
+      let i = 2;
+      while (taken.has(`${key}_${i}`)) i += 1;
+      key = `${key}_${i}`;
+    }
+    newTypeLabel = '';
+    commitTypes([...types, { key, label, short: label.toLowerCase() }]);
+    toast(`Added "${label}"`);
+  };
+
+  return h(
+    'div',
+    { class: 'stack' },
+
+    h(
+      'div',
+      { class: 'card' },
+      h('div', { class: 'eyebrow' }, `Segment types (${types.length})`),
+      h(
+        'div',
+        { class: 'muted', style: { fontSize: '12.5px', margin: '6px 0 12px' } },
+        'Name is what you see while lapping; column is the CSV and table header. ' +
+          'Renaming never touches a stored trip — trips reference a fixed key, not the name.',
+      ),
+      ...types.map((t) => {
+        const usage = typeUsage(t.key);
+        const isDrive = t.key === DRIVE_KEY;
+        return h(
+          'div',
+          { class: 'seg-edit' },
+          h(
+            'div',
+            { class: 'row-between' },
+            h('code', { class: 'muted', style: { fontSize: '11.5px' } }, t.key),
+            h(
+              'span',
+              { class: 'muted', style: { fontSize: '11.5px' } },
+              usage ? `${usage} recorded` : 'unused',
+            ),
+          ),
+          h(
+            'div',
+            { class: 'seg-grid' },
+            field(
+              'Name',
+              h('input', {
+                class: 'input-sm',
+                value: t.label,
+                onchange: (e) => {
+                  const v = e.target.value.trim();
+                  if (!v) return render();
+                  commitTypes(types.map((x) => (x.key === t.key ? { ...x, label: v } : x)));
+                },
+              }),
+            ),
+            field(
+              'Column',
+              h('input', {
+                class: 'input-sm',
+                value: t.short,
+                onchange: (e) => {
+                  const v = e.target.value.trim();
+                  if (!v) return render();
+                  commitTypes(types.map((x) => (x.key === t.key ? { ...x, short: v } : x)));
+                },
+              }),
+            ),
+          ),
+          h(
+            'div',
+            { class: 'row', style: { marginTop: '8px' } },
+            isDrive
+              ? h(
+                  'span',
+                  { class: 'muted grow', style: { fontSize: '12px' } },
+                  'Kept: “vs Google” is defined as this segment minus the prediction.',
+                )
+              : h(
+                  'button',
+                  {
+                    class: 'btn btn-ghost btn-sm btn-danger',
+                    type: 'button',
+                    onclick: () => {
+                      if (usage) {
+                        toast(`Used by ${usage} segment${usage > 1 ? 's' : ''} — can't delete`);
+                        return;
+                      }
+                      if (!confirm(`Delete the "${t.label}" segment type?`)) return;
+                      saveSequences({
+                        east: sequences.east.filter((k) => k !== t.key),
+                        west: sequences.west.filter((k) => k !== t.key),
+                      });
+                      commitTypes(types.filter((x) => x.key !== t.key));
+                      toast('Type deleted');
+                    },
+                  },
+                  'Delete',
+                ),
+          ),
+        );
+      }),
+      h(
+        'div',
+        { class: 'row gap-sm', style: { marginTop: '12px' } },
+        h('input', {
+          class: 'input-sm grow',
+          placeholder: 'New type, e.g. Toll booth',
+          value: newTypeLabel,
+          oninput: (e) => {
+            newTypeLabel = e.target.value;
+          },
+        }),
+        h('button', { class: 'btn btn-sm', type: 'button', onclick: addType }, 'Add'),
+      ),
+    ),
+
+    ...DIRECTIONS.map((dir) => sequenceCard(dir, sequences, commitSeq)),
+  );
+}
+
+/** The segment order preloaded when you start a trip in this direction. */
+function sequenceCard(dir, sequences, commitSeq) {
+  const seq = sequences[dir];
+  const unused = segmentTypes().filter((k) => !seq.includes(k));
+
+  const move = (i, delta) => {
+    const j = i + delta;
+    if (j < 0 || j >= seq.length) return;
+    const next = [...seq];
+    [next[i], next[j]] = [next[j], next[i]];
+    commitSeq({ ...sequences, [dir]: next });
+  };
+
+  return h(
+    'div',
+    { class: 'card' },
+    h('div', { class: 'eyebrow' }, `${DIRECTION_LABELS[dir]} — default sequence`),
+    h(
+      'div',
+      { class: 'muted', style: { fontSize: '12.5px', margin: '6px 0 10px' } },
+      'Only a starting point. You can still add, drop and reorder segments on any individual trip.',
+    ),
+    h(
+      'div',
+      { class: 'queue' },
+      ...seq.map((key, i) =>
+        h(
+          'div',
+          { class: 'queue-item', 'data-state': 'next' },
+          h('span', { class: 'queue-badge' }),
+          h('span', { class: 'grow' }, segmentLabel(key)),
+          h(
+            'button',
+            {
+              class: 'btn btn-ghost btn-icon',
+              type: 'button',
+              'aria-label': 'Move up',
+              disabled: i === 0,
+              onclick: () => move(i, -1),
+            },
+            '↑',
+          ),
+          h(
+            'button',
+            {
+              class: 'btn btn-ghost btn-icon',
+              type: 'button',
+              'aria-label': 'Move down',
+              disabled: i === seq.length - 1,
+              onclick: () => move(i, 1),
+            },
+            '↓',
+          ),
+          h(
+            'button',
+            {
+              class: 'btn btn-ghost btn-icon',
+              type: 'button',
+              'aria-label': 'Remove',
+              disabled: seq.length === 1,
+              onclick: () => commitSeq({ ...sequences, [dir]: seq.filter((_, j) => j !== i) }),
+            },
+            '×',
+          ),
+        ),
+      ),
+    ),
+    unused.length
+      ? h(
+          'div',
+          { class: 'row wrap gap-sm', style: { marginTop: '10px' } },
+          h('span', { class: 'muted', style: { fontSize: '12px' } }, 'Add:'),
+          ...unused.map((key) =>
+            h(
+              'button',
+              {
+                class: 'btn btn-ghost btn-sm',
+                type: 'button',
+                onclick: () => commitSeq({ ...sequences, [dir]: [...seq, key] }),
+              },
+              `+ ${segmentLabel(key)}`,
+            ),
+          ),
+        )
+      : null,
+  );
+}
+
+function field(label, input) {
+  return h('label', { class: 'field grow' }, h('span', { class: 'field-label' }, label), input);
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +805,21 @@ export function exportTrips(trips, { label = 'commutes' } = {}) {
 
 function backupView() {
   const trips = state.trips;
-  const jsonText = () => JSON.stringify({ app: 'commute-logger', version: 1, exported_at: Date.now(), trips }, null, 2);
+  // Types and sequences ride along: without them a restore on a fresh device
+  // would leave every custom segment orphaned with no definition.
+  const jsonText = () =>
+    JSON.stringify(
+      {
+        app: 'commute-logger',
+        version: 2,
+        exported_at: Date.now(),
+        types: loadTypes(),
+        sequences: loadSequences(),
+        trips,
+      },
+      null,
+      2,
+    );
 
   const markBackedUp = () => updatePrefs({ lastBackupAt: Date.now(), backupNagDismissedAt: null });
 
@@ -684,6 +947,18 @@ function restoreCard() {
       return;
     }
     const normalized = incoming.map(normalizeTrip);
+
+    // Merge the incoming vocabulary by key so restored segments keep their
+    // names. Local definitions win on conflict; unknown types are added.
+    if (Array.isArray(parsed?.types) && parsed.types.length) {
+      const byKey = new Map(loadTypes().map((t) => [t.key, t]));
+      for (const t of parsed.types) {
+        if (t?.key && !byKey.has(t.key)) byKey.set(t.key, t);
+      }
+      saveTypes([...byKey.values()]);
+    }
+    if (mode === 'replace' && parsed?.sequences) saveSequences(parsed.sequences);
+
     if (mode === 'replace') {
       if (!confirm(`Replace all ${state.trips.length} trips with ${normalized.length} from the backup?`)) return;
       state.trips = normalized;
@@ -757,10 +1032,11 @@ function header() {
     data: 'Data',
     trip: 'Trip',
     manual: 'Add past trip',
+    segments: 'Segment types',
     review: 'Review',
     backup: 'Export & backup',
   };
-  const showBack = ['trip', 'manual', 'backup'].includes(r.name);
+  const showBack = ['trip', 'manual', 'backup', 'segments'].includes(r.name);
   return h(
     'div',
     { class: 'topbar' },
@@ -790,6 +1066,8 @@ function currentBody() {
       return renderManualAdd();
     case 'backup':
       return backupView();
+    case 'segments':
+      return segmentsView();
     case 'review':
       if (!state.active) return trackView();
       return renderTripEditor(state.active.trip, {
@@ -820,7 +1098,7 @@ function currentBody() {
 function renderTabs() {
   const activeTab = ['track', 'review'].includes(state.route.name)
     ? 'track'
-    : ['history', 'trip', 'manual', 'backup'].includes(state.route.name)
+    : ['history', 'trip', 'manual', 'backup', 'segments'].includes(state.route.name)
       ? 'history'
       : 'data';
   mount(

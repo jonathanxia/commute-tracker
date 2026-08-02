@@ -20,9 +20,26 @@ Three screens:
   in-progress trip is written to storage on *every* tap, so iOS killing the app mid-commute
   loses nothing.
 - **History** — newest first, tap to open the editor. Manual entry for typing a past trip
-  from durations. Export and backup live here.
+  from durations. Export, backup and the segment-type editor live here.
 - **Data** — filters, a sortable table with a column picker, and three charts. Filters drive
   the table, the charts *and* the export from that screen.
+
+### Segment types are data, not code
+
+The vocabulary lives in `localStorage`, not in a constant. **History → Segments** lets you add,
+rename and delete segment types and edit each direction's default sequence. Adding a type makes
+it appear immediately in the lap chips, the trip editor, the manual-entry form, the data table
+and the CSV — no code edit anywhere.
+
+A type has a **stable key** and an **editable name**, so renaming "Garage wait" to "Valet"
+rewrites nothing in storage. Two guards keep that from losing data: a type in use can't be
+deleted (it names the count instead), and any key found in a trip but missing from the
+vocabulary — deleted, or restored from another device — still gets a column and a label.
+
+`drive` is the one key with semantics: `drive_residual` is defined as that segment minus the
+Google prediction, and two charts plot it, so it can be renamed but not deleted.
+
+**The wide CSV therefore has a variable column count.** Read it by header name, not by position.
 
 ### Two distinctions the whole thing rests on
 
@@ -110,10 +127,13 @@ fully rebuild your data — the CSV rounds to 2 decimals. A banner nags you when
 
 ## Exports
 
-- **CSV** — one row per trip, the human-scannable format:
+- **CSV** — one row per trip, the human-scannable format. With the default vocabulary:
   `trip, date, dow, depart, direction, gmaps_pred, arrive, walk_to_car, garage_wait, drive, walk_to_dest, door2door, drive_residual`
+  The block between `arrive` and `door2door` is one column per segment type, so it grows when
+  you add a type. Parse by header name.
 - **Segment CSV** — one row per segment with raw timestamps, lossless.
-- **JSON backup / restore.**
+- **JSON backup / restore.** Carries the segment vocabulary and default sequences alongside the
+  trips, so a restore on a fresh device doesn't leave custom segments unnamed.
 
 `drive_residual` (`drive − gmaps_pred`) is **never stored**. It's derived at render and
 export time, like `dow`, `arrive`, and `door2door`.

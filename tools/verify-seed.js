@@ -10,13 +10,12 @@
 // Shared by tools/verify-seed.mjs (node) and verify.html (browser).
 
 import { rowsToTrips, rowIssues } from '../js/seed.js';
-import { wideRows, WIDE_COLUMNS } from '../js/csv.js';
+import { wideRows, wideColumns } from '../js/csv.js';
 import { fmtMin } from '../js/format.js';
-
-const SEGMENTS = ['walk_to_car', 'garage_wait', 'drive', 'walk_to_dest'];
+import { columnTypes } from '../js/store.js';
 
 /** The row as the source table states it, rendered into CSV cells. */
-function expectedCells(row, n) {
+function expectedCells(row, n, segments) {
   return [
     String(n),
     row.date,
@@ -25,7 +24,7 @@ function expectedCells(row, n) {
     row.direction,
     row.gmaps_pred == null ? '' : String(row.gmaps_pred),
     row.arrive || '',
-    ...SEGMENTS.map((t) => (row[t] == null ? '' : fmtMin(Number(row[t])))),
+    ...segments.map((t) => (row[t] == null ? '' : fmtMin(Number(row[t])))),
     row.door2door == null ? '' : fmtMin(Number(row.door2door)),
     row.drive_residual || '',
   ];
@@ -37,6 +36,8 @@ export function runVerification(seed) {
   const notes = rowIssues(rows).map((m) => ({ kind: 'note', message: m }));
 
   const trips = rowsToTrips(rows);
+  const header = wideColumns(trips);
+  const segments = columnTypes(trips);
   const actual = wideRows(trips).map((cells) => cells.map((c) => String(c)));
 
   if (actual.length !== rows.length) {
@@ -49,14 +50,14 @@ export function runVerification(seed) {
   }
 
   rows.forEach((row, i) => {
-    const exp = expectedCells(row, i + 1);
+    const exp = expectedCells(row, i + 1, segments);
     const act = actual[i] || [];
     exp.forEach((want, c) => {
       const got = act[c] ?? '';
       if (got !== want) {
         failures.push({
           row: i + 1,
-          column: WIDE_COLUMNS[c],
+          column: header[c],
           expected: want === '' ? '(blank)' : want,
           actual: got === '' ? '(blank)' : got,
         });
@@ -68,8 +69,8 @@ export function runVerification(seed) {
     pass: failures.length === 0,
     failures,
     notes,
-    checked: rows.length * WIDE_COLUMNS.length,
-    header: WIDE_COLUMNS,
+    checked: rows.length * header.length,
+    header,
     actual,
     trips,
   };

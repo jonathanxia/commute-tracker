@@ -10,20 +10,31 @@
 
 import { dateKey, dowOf } from './format.js';
 
-export const SEGMENT_TYPES = ['walk_to_car', 'garage_wait', 'drive', 'walk_to_dest'];
+// The segment vocabulary is user data, not a constant. Everything downstream —
+// CSV columns, table columns, the manual-entry form, the relabel chips — is
+// generated from it, so adding a type is one action in the UI rather than eight
+// edits across five files.
+//
+// A type has a STABLE key and an editable label. Trips store the key, so
+// renaming "Garage wait" to "Valet" never touches a single stored trip.
 
-export const SEGMENT_LABELS = {
-  walk_to_car: 'Walk to car',
-  garage_wait: 'Garage wait',
-  drive: 'Drive',
-  walk_to_dest: 'Walk to dest',
-};
+export const BUILTIN_TYPES = [
+  { key: 'walk_to_car', label: 'Walk to car', short: 'walk→car' },
+  { key: 'garage_wait', label: 'Garage wait', short: 'garage' },
+  { key: 'drive', label: 'Drive', short: 'drive' },
+  { key: 'walk_to_dest', label: 'Walk to dest', short: 'walk→dest' },
+];
 
-export const SEGMENT_SHORT = {
-  walk_to_car: 'walk→car',
-  garage_wait: 'garage',
-  drive: 'drive',
-  walk_to_dest: 'walk→dest',
+/**
+ * The one key the app reasons about semantically: drive_residual is defined as
+ * this segment minus the Google prediction, and two charts plot it. It can be
+ * relabelled freely but never deleted, or that metric loses its meaning.
+ */
+export const DRIVE_KEY = 'drive';
+
+export const BUILTIN_SEQUENCES = {
+  east: ['walk_to_car', 'drive', 'walk_to_dest'],
+  west: ['walk_to_car', 'garage_wait', 'drive', 'walk_to_dest'],
 };
 
 export const DIRECTIONS = ['east', 'west'];
@@ -33,18 +44,112 @@ export const DIRECTION_LABELS = {
   west: 'West — office → home',
 };
 
-// Defaults only. Every trip can add, remove, reorder and relabel segments; the
-// app must never assume a fixed count or layout.
-export const DEFAULT_SEQUENCE = {
-  east: ['walk_to_car', 'drive', 'walk_to_dest'],
-  west: ['walk_to_car', 'garage_wait', 'drive', 'walk_to_dest'],
-};
-
 export const KEYS = {
   trips: 'ct.trips.v1',
   active: 'ct.active.v1',
   prefs: 'ct.prefs.v1',
+  types: 'ct.types.v1',
+  sequences: 'ct.sequences.v1',
 };
+
+/** "garage_wait" -> "Garage wait". Fallback label for a key with no definition. */
+export function humanizeKey(key) {
+  const s = String(key).replace(/_/g, ' ').trim();
+  return s ? s[0].toUpperCase() + s.slice(1) : 'Segment';
+}
+
+/** "Toll booth wait!" -> "toll_booth_wait". Keys are snake_case and ASCII-safe. */
+export function slugifyKey(label) {
+  return (
+    String(label)
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 40) || 'segment'
+  );
+}
+
+let typesCache = null;
+
+export function loadTypes() {
+  if (typesCache) return typesCache;
+  const raw = readJSON(KEYS.types, null);
+  const source = Array.isArray(raw) && raw.length ? raw : BUILTIN_TYPES;
+  const seen = new Set();
+  const list = [];
+  for (const t of source) {
+    if (!t || typeof t.key !== 'string' || !t.key || seen.has(t.key)) continue;
+    seen.add(t.key);
+    const label = typeof t.label === 'string' && t.label.trim() ? t.label.trim() : humanizeKey(t.key);
+    list.push({ key: t.key, label, short: typeof t.short === 'string' && t.short ? t.short : label });
+  }
+  // The drive type is load-bearing; re-add it if a bad edit or an old backup
+  // dropped it, rather than letting residuals silently go blank forever.
+  if (!seen.has(DRIVE_KEY)) list.push({ ...BUILTIN_TYPES.find((t) => t.key === DRIVE_KEY) });
+  typesCache = list;
+  return typesCache;
+}
+
+export function saveTypes(list) {
+  typesCache = null;
+  return writeJSON(KEYS.types, list);
+}
+
+export function segmentTypes() {
+  return loadTypes().map((t) => t.key);
+}
+
+export function segmentLabel(key) {
+  return loadTypes().find((t) => t.key === key)?.label ?? humanizeKey(key);
+}
+
+export function segmentShort(key) {
+  return loadTypes().find((t) => t.key === key)?.short ?? humanizeKey(key).toLowerCase();
+}
+
+/**
+ * Segment keys to show as columns: the vocabulary, plus any key that actually
+ * appears in the data but is no longer defined. A recorded segment must never
+ * vanish from an export because its type was deleted or came from a backup made
+ * on another device.
+ */
+export function columnTypes(trips = []) {
+  const keys = segmentTypes();
+  const known = new Set(keys);
+  const extras = [];
+  for (const trip of trips) {
+    for (const seg of trip.segments || []) {
+      if (seg.type && !known.has(seg.type)) {
+        known.add(seg.type);
+        extras.push(seg.type);
+      }
+    }
+  }
+  return [...keys, ...extras];
+}
+
+export function loadSequences() {
+  const raw = readJSON(KEYS.sequences, null);
+  const out = {};
+  for (const dir of DIRECTIONS) {
+    const seq = Array.isArray(raw?.[dir]) ? raw[dir].filter((k) => typeof k === 'string' && k) : null;
+    out[dir] = seq && seq.length ? seq : [...BUILTIN_SEQUENCES[dir]];
+  }
+  return out;
+}
+
+export function saveSequences(seq) {
+  return writeJSON(KEYS.sequences, seq);
+}
+
+/** Default sequence for a direction, with deleted types dropped. */
+export function sequenceFor(direction) {
+  const known = new Set(segmentTypes());
+  const seq = loadSequences()[direction] || [];
+  const filtered = seq.filter((k) => known.has(k));
+  return filtered.length ? filtered : [DRIVE_KEY];
+}
 
 // ---------------------------------------------------------------------------
 // ids + construction
@@ -89,7 +194,9 @@ export function createSegment(type, start_ts, end_ts = null) {
 function normalizeSegment(seg) {
   return {
     id: seg.id || uid('s'),
-    type: SEGMENT_TYPES.includes(seg.type) ? seg.type : 'drive',
+    // Any slug is accepted. Validating against the current vocabulary would
+    // silently rewrite segments restored from a device with custom types.
+    type: typeof seg.type === 'string' && seg.type ? seg.type : DRIVE_KEY,
     start_ts: numOrNull(seg.start_ts),
     end_ts: numOrNull(seg.end_ts),
   };
@@ -207,7 +314,7 @@ export function minutesByType(trip, type) {
 }
 
 export function driveMin(trip) {
-  return minutesByType(trip, 'drive');
+  return minutesByType(trip, DRIVE_KEY);
 }
 
 /** drive − gmaps_pred. Derived at read time; never stored on the trip. */
@@ -252,8 +359,19 @@ export function segmentIssues(trip) {
   return issues;
 }
 
-/** Everything the table, charts and CSV read. One place, so they can't diverge. */
+/**
+ * Everything the table, charts and CSV read. One place, so they can't diverge.
+ *
+ * `min` is keyed by segment type and covers every type the trip actually uses,
+ * not just the ones currently in the vocabulary — deleting a type must never
+ * make an already-recorded segment disappear from a view or an export.
+ */
 export function tripView(trip, index = null) {
+  const min = {};
+  for (const key of segmentTypes()) min[key] = minutesByType(trip, key);
+  for (const seg of trip.segments) {
+    if (!(seg.type in min)) min[seg.type] = minutesByType(trip, seg.type);
+  }
   return {
     trip,
     id: trip.id,
@@ -264,10 +382,9 @@ export function tripView(trip, index = null) {
     direction: trip.direction,
     gmaps_pred_min: trip.gmaps_pred_min,
     arrive_ts: arriveTs(trip),
-    walk_to_car: minutesByType(trip, 'walk_to_car'),
-    garage_wait: minutesByType(trip, 'garage_wait'),
-    drive: minutesByType(trip, 'drive'),
-    walk_to_dest: minutesByType(trip, 'walk_to_dest'),
+    min,
+    // The one type with its own semantics, so charts and residuals can rely on it.
+    drive: min[DRIVE_KEY] ?? null,
     door2door: door2doorMin(trip),
     drive_residual: residualMin(trip),
     incomplete: isIncomplete(trip),
@@ -350,7 +467,7 @@ export function loadActive() {
   if (!raw || !raw.trip) return null;
   return {
     trip: normalizeTrip(raw.trip),
-    queue: Array.isArray(raw.queue) ? raw.queue.filter((t) => SEGMENT_TYPES.includes(t)) : [],
+    queue: Array.isArray(raw.queue) ? raw.queue.filter((t) => typeof t === 'string' && t) : [],
     index: Number.isInteger(raw.index) ? raw.index : 0,
     finished: raw.finished === true,
   };
@@ -365,21 +482,10 @@ export function saveActive(session) {
 }
 
 export const DEFAULT_PREFS = {
-  columns: [
-    'n',
-    'date',
-    'dow',
-    'depart',
-    'direction',
-    'gmaps_pred',
-    'arrive',
-    'walk_to_car',
-    'garage_wait',
-    'drive',
-    'walk_to_dest',
-    'door2door',
-    'drive_residual',
-  ],
+  // Hidden columns, not visible ones. With an allow-list of visible columns, a
+  // newly added segment type would be invisible until you went and ticked it —
+  // exactly the papercut this whole refactor exists to remove.
+  hiddenColumns: [],
   sort: { key: 'depart_ts', dir: 'desc' },
   filters: { direction: 'all', dows: [], from: '', to: '', incompleteOnly: false },
   chart: 'drive',

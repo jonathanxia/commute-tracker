@@ -7,8 +7,10 @@
 
 import {
   DIRECTIONS,
-  SEGMENT_LABELS,
-  SEGMENT_TYPES,
+  DRIVE_KEY,
+  segmentLabel,
+  segmentTypes,
+  sequenceFor,
   createSegment,
   createTrip,
   door2doorMin,
@@ -211,7 +213,7 @@ export function renderTripEditor(trip, opts) {
             const prev = trip.segments.at(-1);
             const start = prev?.end_ts ?? trip.depart_ts;
             const used = new Set(trip.segments.map((s) => s.type));
-            const type = SEGMENT_TYPES.find((t) => !used.has(t)) || 'drive';
+            const type = segmentTypes().find((t) => !used.has(t)) || DRIVE_KEY;
             trip.segments.push(createSegment(type, start, start));
             commit();
           },
@@ -255,7 +257,11 @@ function segmentEditor(trip, seg, i, commit) {
             commit();
           },
         },
-        ...SEGMENT_TYPES.map((t) => h('option', { value: t, selected: t === seg.type }, SEGMENT_LABELS[t])),
+        // An orphan type (deleted, or from another device's backup) still needs
+        // an option, or opening the editor would silently retype the segment.
+        ...[...new Set([...segmentTypes(), seg.type])].map((t) =>
+          h('option', { value: t, selected: t === seg.type }, segmentLabel(t)),
+        ),
       ),
       h('button', { class: 'btn btn-ghost btn-icon', type: 'button', 'aria-label': 'Move up', disabled: i === 0, onclick: () => move(-1) }, '↑'),
       h(
@@ -355,7 +361,7 @@ export function renderManualAdd() {
     direction: guessDirection(now.getTime()),
     gmaps: '',
     incomplete: false,
-    durations: { walk_to_car: '', garage_wait: '', drive: '', walk_to_dest: '' },
+    durations: Object.fromEntries(segmentTypes().map((k) => [k, ''])),
   };
 
   const root = h('div', { class: 'stack' });
@@ -364,12 +370,24 @@ export function renderManualAdd() {
     root.replaceChildren(...body());
   };
 
+  /**
+   * The direction's default sequence first, then any other type you actually
+   * filled in — so a segment that isn't normally part of this direction still
+   * gets recorded, in a sensible place, without needing the editor afterwards.
+   */
+  /** Which duration fields to show, and in what order. */
+  const fieldOrder = () => {
+    const base = sequenceFor(draft.direction);
+    return [...base, ...segmentTypes().filter((k) => !base.includes(k))];
+  };
+
   const orderFor = () => {
-    if (draft.direction === 'west') return ['walk_to_car', 'garage_wait', 'drive', 'walk_to_dest'];
-    // Eastbound picks up a destination garage wait only when one was recorded.
-    return draft.durations.garage_wait === ''
-      ? ['walk_to_car', 'drive', 'walk_to_dest']
-      : ['walk_to_car', 'drive', 'garage_wait', 'walk_to_dest'];
+    const base = sequenceFor(draft.direction);
+    const extras = segmentTypes().filter((k) => !base.includes(k) && draft.durations[k] !== '');
+    if (!extras.length) return base;
+    // Anything extra lands just before the final segment, which is where an
+    // unexpected wait almost always happened.
+    return [...base.slice(0, -1), ...extras, ...base.slice(-1)];
   };
 
   const create = () => {
@@ -462,12 +480,15 @@ export function renderManualAdd() {
           { class: 'muted', style: { fontSize: '12.5px', margin: '6px 0 4px' } },
           'Leave blank if it did not happen or was not recorded. Type 0 if it happened and was negligible — those are different things and the CSV keeps them apart.',
         ),
-        ...orderFor().map((type) =>
+        // A field for every type, not just the ones in this direction's default
+        // sequence — otherwise a type you just added would have nowhere to go.
+        // The direction's own segments come first; the rest follow.
+        ...fieldOrder().map((type) =>
           h(
             'div',
             { style: { marginTop: '8px' } },
             field(
-              SEGMENT_LABELS[type],
+              segmentLabel(type),
               h('input', {
                 class: 'input-sm',
                 type: 'number',
@@ -477,7 +498,6 @@ export function renderManualAdd() {
                 value: draft.durations[type],
                 onchange: (e) => {
                   draft.durations[type] = e.target.value.trim();
-                  if (type === 'garage_wait' && draft.direction === 'east') rerender();
                 },
               }),
             ),

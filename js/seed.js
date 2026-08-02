@@ -6,7 +6,7 @@
 // phone via Backup JSON → Restore instead.
 
 import { dateStrToTs, dowOf } from './format.js';
-import { SEGMENT_TYPES, tripFromDurations } from './store.js';
+import { segmentTypes, tripFromDurations } from './store.js';
 
 /**
  * Turn one row of the source table into a trip with real timestamps.
@@ -24,8 +24,8 @@ import { SEGMENT_TYPES, tripFromDurations } from './store.js';
  */
 export function rowToTrip(row) {
   const order = Array.isArray(row.order) && row.order.length
-    ? row.order.filter((t) => SEGMENT_TYPES.includes(t))
-    : SEGMENT_TYPES;
+    ? row.order.filter((t) => typeof t === 'string' && t)
+    : segmentTypes();
 
   const present = order
     .map((type) => ({ type, minutes: row[type] }))

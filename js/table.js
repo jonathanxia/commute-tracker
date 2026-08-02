@@ -2,7 +2,7 @@
 // charts. Filters drive the table, the charts and the export from here, so what
 // you see is what you get.
 
-import { chronological, tripView } from './store.js';
+import { chronological, columnTypes, segmentShort, tripView } from './store.js';
 import { dateKey, dowOf, fmtClock, fmtMin, fmtSigned } from './format.js';
 import { h } from './dom.js';
 import { CHART_KEYS, chartCard } from './charts.js';
@@ -11,39 +11,50 @@ import { exportTrips, go, render, state, toast, updatePrefs } from './app.js';
 const DOWS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 /**
- * One definition per column, used by the table, the card list and the picker.
+ * Column definitions, used by the table, the card list and the picker.
  * `sort` returns a comparable primitive; null sorts last in both directions so
  * blanks never masquerade as small numbers.
+ *
+ * The per-segment block in the middle is generated from the vocabulary, in the
+ * same order as the CSV, so adding a segment type adds a table column without
+ * anyone editing this file.
  */
-const COLUMNS = [
-  { key: 'n', label: '#', align: 'left', text: (r) => String(r.n), sort: (r) => r.n },
-  { key: 'date', label: 'date', align: 'left', text: (r) => r.date, sort: (r) => r.depart_ts },
-  { key: 'dow', label: 'dow', align: 'left', text: (r) => r.dow, sort: (r) => DOWS.indexOf(r.dow) },
-  { key: 'depart', label: 'depart', text: (r) => fmtClock(r.depart_ts), sort: (r) => r.depart_ts % 86400000 },
-  {
-    key: 'direction',
-    label: 'dir',
-    align: 'left',
-    text: (r) => r.direction,
-    sort: (r) => r.direction,
-  },
-  { key: 'gmaps_pred', label: 'google', text: (r) => (r.gmaps_pred_min == null ? '' : String(r.gmaps_pred_min)), sort: (r) => r.gmaps_pred_min },
-  { key: 'arrive', label: 'arrive', text: (r) => fmtClock(r.arrive_ts), sort: (r) => r.arrive_ts },
-  { key: 'walk_to_car', label: 'walk→car', text: (r) => fmtMin(r.walk_to_car), sort: (r) => r.walk_to_car },
-  { key: 'garage_wait', label: 'garage', text: (r) => fmtMin(r.garage_wait), sort: (r) => r.garage_wait },
-  { key: 'drive', label: 'drive', text: (r) => fmtMin(r.drive), sort: (r) => r.drive },
-  { key: 'walk_to_dest', label: 'walk→dest', text: (r) => fmtMin(r.walk_to_dest), sort: (r) => r.walk_to_dest },
-  { key: 'door2door', label: 'door2door', text: (r) => fmtMin(r.door2door), sort: (r) => r.door2door },
-  {
-    key: 'drive_residual',
-    label: 'vs google',
-    text: (r) => fmtSigned(r.drive_residual),
-    sort: (r) => r.drive_residual,
-    cls: (r) => (r.drive_residual == null ? '' : r.drive_residual > 0 ? 'pos' : 'neg'),
-  },
-];
+function buildColumns(trips) {
+  const lead = [
+    { key: 'n', label: '#', align: 'left', text: (r) => String(r.n), sort: (r) => r.n },
+    { key: 'date', label: 'date', align: 'left', text: (r) => r.date, sort: (r) => r.depart_ts },
+    { key: 'dow', label: 'dow', align: 'left', text: (r) => r.dow, sort: (r) => DOWS.indexOf(r.dow) },
+    { key: 'depart', label: 'depart', text: (r) => fmtClock(r.depart_ts), sort: (r) => r.depart_ts % 86400000 },
+    { key: 'direction', label: 'dir', align: 'left', text: (r) => r.direction, sort: (r) => r.direction },
+    {
+      key: 'gmaps_pred',
+      label: 'google',
+      text: (r) => (r.gmaps_pred_min == null ? '' : String(r.gmaps_pred_min)),
+      sort: (r) => r.gmaps_pred_min,
+    },
+    { key: 'arrive', label: 'arrive', text: (r) => fmtClock(r.arrive_ts), sort: (r) => r.arrive_ts },
+  ];
 
-const byKey = new Map(COLUMNS.map((c) => [c.key, c]));
+  const segments = columnTypes(trips).map((key) => ({
+    key,
+    label: segmentShort(key),
+    text: (r) => fmtMin(r.min[key]),
+    sort: (r) => r.min[key] ?? null,
+  }));
+
+  const tail = [
+    { key: 'door2door', label: 'door2door', text: (r) => fmtMin(r.door2door), sort: (r) => r.door2door },
+    {
+      key: 'drive_residual',
+      label: 'vs google',
+      text: (r) => fmtSigned(r.drive_residual),
+      sort: (r) => r.drive_residual,
+      cls: (r) => (r.drive_residual == null ? '' : r.drive_residual > 0 ? 'pos' : 'neg'),
+    },
+  ];
+
+  return [...lead, ...segments, ...tail];
+}
 
 // ── filtering ──────────────────────────────────────────────────────────────
 
@@ -58,8 +69,15 @@ function applyFilters(trips, f) {
   });
 }
 
+// The column set depends on the vocabulary and the data, so it is rebuilt each
+// render and shared with the helpers below rather than being a module constant.
+let currentColumns = [];
+const columnFor = (key) =>
+  currentColumns.find((c) => c.key === key) || currentColumns.find((c) => c.key === 'date');
+
 function sortRows(rows, sort) {
-  const col = byKey.get(sort.key) || byKey.get('date');
+  const col = columnFor(sort.key);
+  if (!col) return rows;
   const sign = sort.dir === 'asc' ? 1 : -1;
   return [...rows].sort((a, b) => {
     const av = col.sort(a);
@@ -145,7 +163,7 @@ function activeFilterCount(f) {
 function filtersCard() {
   const f = state.prefs.filters;
   const n = activeFilterCount(f);
-  const hiddenCols = COLUMNS.length - state.prefs.columns.length;
+  const hiddenCols = state.prefs.hiddenColumns.length;
 
   const toggle = h(
     'button',
@@ -252,18 +270,18 @@ function filtersCard() {
       'div',
       { class: 'colpicker' },
       h('span', { class: 'field-label', style: { alignSelf: 'center', marginRight: '2px' } }, 'Columns'),
-      ...COLUMNS.map((c) =>
+      ...currentColumns.map((c) =>
         h(
           'button',
           {
             class: 'chip',
             type: 'button',
-            'aria-pressed': String(state.prefs.columns.includes(c.key)),
+            'aria-pressed': String(!state.prefs.hiddenColumns.includes(c.key)),
             onclick: () => {
-              const cols = state.prefs.columns.includes(c.key)
-                ? state.prefs.columns.filter((k) => k !== c.key)
-                : COLUMNS.filter((x) => x.key === c.key || state.prefs.columns.includes(x.key)).map((x) => x.key);
-              updatePrefs({ columns: cols });
+              const hidden = state.prefs.hiddenColumns.includes(c.key)
+                ? state.prefs.hiddenColumns.filter((k) => k !== c.key)
+                : [...state.prefs.hiddenColumns, c.key];
+              updatePrefs({ hiddenColumns: hidden });
               render();
             },
           },
@@ -425,8 +443,9 @@ export function renderDataView() {
   const filtered = applyFilters(state.trips, f);
   // Numbered chronologically over the filtered set, so the on-screen # matches
   // the trip column of an export taken from this view.
+  currentColumns = buildColumns(state.trips);
   const rows = sortRows(chronological(filtered).map((t, i) => tripView(t, i + 1)), state.prefs.sort);
-  const cols = COLUMNS.filter((c) => state.prefs.columns.includes(c.key));
+  const cols = currentColumns.filter((c) => !state.prefs.hiddenColumns.includes(c.key));
   const wide = typeof matchMedia !== 'undefined' && matchMedia('(min-width: 700px)').matches;
 
   if (!state.trips.length) {
