@@ -41,26 +41,42 @@
 
 * { box-sizing: border-box; }
 
+/* iOS standalone layout.
+   The page itself never scrolls: html/body are a fixed-height flex column, the
+   app pane scrolls inside it, and the tab bar is an ordinary flow item at the
+   bottom of the column. `position: fixed` is deliberately NOT used for the bar —
+   in a home-screen PWA iOS strands fixed elements at a stale offset once the
+   page scrolls or a date-picker keyboard opens and closes, which leaves the bar
+   floating in the middle of the screen. Normal flow can't do that. */
 html, body {
   margin: 0;
   padding: 0;
+  height: 100%;
+  overflow: hidden;
   background: var(--plane);
   color: var(--ink);
   -webkit-text-size-adjust: 100%;
 }
 
 body {
-  min-height: 100dvh;
-  overscroll-behavior-y: none;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Kill the iOS tap-highlight flash; we draw our own :active states. */
 button, a, .tap { -webkit-tap-highlight-color: transparent; }
 
+/* The only scrolling element in the app. */
 #app {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
   max-width: 1180px;
-  margin: 0 auto;
-  padding: calc(var(--safe-top) + 10px) 14px calc(var(--tabbar-h) + var(--safe-bottom) + 24px);
+  align-self: center;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding: calc(var(--safe-top) + 10px) 14px 28px;
 }
 
 /* ── typography ─────────────────────────────────────────────────────────── */
@@ -219,18 +235,21 @@ textarea { min-height: 110px; resize: vertical; font-size: 13px; font-family: ui
 
 /* ── tab bar ────────────────────────────────────────────────────────────── */
 
+/* In normal flow at the bottom of the body column — never `position: fixed`.
+   Opaque and a shade lighter than the page so it reads as an anchored bar
+   rather than three labels hovering over the background. The safe-area padding
+   is inside the bar, so its own surface fills the home-indicator strip. */
 .tabbar {
-  position: fixed;
-  left: 0; right: 0; bottom: 0;
+  flex: 0 0 auto;
   z-index: 40;
   display: flex;
-  background: rgba(10, 13, 19, 0.92);
-  backdrop-filter: blur(14px);
-  border-top: 1px solid var(--border);
+  background: var(--surface);
+  border-top: 1px solid var(--border-strong);
   padding-bottom: var(--safe-bottom);
 }
 
 .tabbar button {
+  position: relative;
   flex: 1;
   height: var(--tabbar-h);
   display: flex;
@@ -246,7 +265,16 @@ textarea { min-height: 110px; resize: vertical; font-size: 13px; font-family: ui
 }
 .tabbar button[aria-current='true'] { color: var(--accent); }
 .tabbar .tab-glyph { font-size: 17px; line-height: 1; }
-.tabbar .dot { position: absolute; top: 9px; margin-left: 20px; width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+.tabbar .dot {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  margin-left: 9px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--good);
+}
 
 /* ── Track view ─────────────────────────────────────────────────────────── */
 

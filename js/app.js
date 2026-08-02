@@ -75,7 +75,9 @@ export function updatePrefs(patch) {
 
 export function go(route) {
   state.route = route;
-  window.scrollTo(0, 0);
+  // #app is the scroll container now, not the window.
+  const pane = $('#app');
+  if (pane) pane.scrollTop = 0;
   render();
 }
 
