@@ -61,6 +61,10 @@ html, body {
 body {
   display: flex;
   flex-direction: column;
+  /* Inset the whole column, not the scrolling pane: content can then never
+     slide under the status bar, while the web view itself still covers the
+     full screen so the tab bar reaches the physical bottom edge. */
+  padding-top: var(--safe-top);
 }
 
 /* Kill the iOS tap-highlight flash; we draw our own :active states. */
@@ -76,7 +80,7 @@ button, a, .tap { -webkit-tap-highlight-color: transparent; }
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
-  padding: calc(var(--safe-top) + 10px) 14px 28px;
+  padding: 10px 14px 28px;
 }
 
 /* ── typography ─────────────────────────────────────────────────────────── */
