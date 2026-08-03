@@ -48,7 +48,7 @@ import { renderDataView } from './table.js';
 // state
 // ---------------------------------------------------------------------------
 
-export const BUILD = 'v11';
+export const BUILD = 'v12';
 
 export const state = {
   trips: [],
@@ -597,9 +597,20 @@ function layoutReport() {
   const standalone =
     (typeof matchMedia !== 'undefined' && matchMedia('(display-mode: standalone)').matches) ||
     navigator.standalone === true;
+  // Where the tab bar's bottom edge actually lands. If it equals the viewport
+  // height, the bar IS at the bottom of everything CSS can reach, and any
+  // remaining gap on screen is outside the viewport — not a layout bug.
+  let bar = '?';
+  try {
+    const el = document.querySelector('.tabbar');
+    if (el) bar = `${Math.round(el.getBoundingClientRect().bottom)}/${window.innerHeight}`;
+  } catch {
+    /* best effort */
+  }
   return (
     `build ${BUILD} · view ${window.innerWidth}×${window.innerHeight} · ` +
     `screen ${screen.width}×${screen.height} · safe ${top}/${bottom} · ` +
+    `bar ${bar} · ` +
     (standalone ? 'standalone' : 'browser')
   );
 }
