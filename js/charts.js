@@ -24,6 +24,7 @@ function palette() {
   };
 }
 
+const DIRS = ['east', 'west'];
 const dirColor = (p, d) => (d === 'east' ? p.east : p.west);
 
 /** Minutes for a segment key on a row. 'door2door' is the derived total. */
@@ -266,31 +267,32 @@ function median(xs) {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-function distribution(rows, width, segKey = 'drive') {
+/**
+ * Spread of ONE metric, east vs west, on its own x scale.
+ *
+ * Deliberately not sharing an axis with door-to-door: a 2-minute garage wait
+ * plotted on a scale that has to reach 85 minutes is squashed into the first
+ * few pixels and tells you nothing. Separate charts, separate scales.
+ */
+function spread(rows, width, key, name) {
   const p = palette();
-  const segName = segmentLabel(segKey);
-  const groups = [
-    { key: segKey, dir: 'east', label: `${segName} · East` },
-    { key: segKey, dir: 'west', label: `${segName} · West` },
-    { key: 'door2door', dir: 'east', label: 'Door to door · East' },
-    { key: 'door2door', dir: 'west', label: 'Door to door · West' },
-  ].map((g) => ({
-    ...g,
+  const groups = DIRS.map((dir) => ({
+    dir,
+    label: dir === 'east' ? 'East' : 'West',
     values: rows
-      .filter((r) => r.direction === g.dir && segValue(r, g.key) != null)
-      .map((r) => segValue(r, g.key)),
+      .filter((r) => r.direction === dir && segValue(r, key) != null)
+      .map((r) => segValue(r, key)),
   }));
 
   const all = groups.flatMap((g) => g.values);
-  if (!all.length) return emptyNote('Nothing to compare in this selection.');
+  if (!all.length) return emptyNote(`No ${name.toLowerCase()} values in this selection.`);
 
-  const rowH = 46;
-  const m = { top: 10, right: 14, bottom: 30, left: 118 };
+  const rowH = 52;
+  const m = { top: 12, right: 16, bottom: 30, left: 62 };
   const height = m.top + m.bottom + rowH * groups.length;
   const iw = Math.max(60, width - m.left - m.right);
 
-  const max = Math.max(...all);
-  const ticks = niceTicks(max);
+  const ticks = niceTicks(Math.max(...all));
   const top = ticks[ticks.length - 1];
   const x = (v) => m.left + (v / top) * iw;
 
@@ -301,12 +303,11 @@ function distribution(rows, width, segKey = 'drive') {
       svg(
         'g',
         null,
-        svg('line', { x1: x(t), x2: x(t), y1: m.top, y2: m.top + rowH * groups.length, stroke: p.grid, 'stroke-width': 1 }),
-        svg(
-          'text',
-          { x: x(t), y: height - 12, 'text-anchor': 'middle', 'font-size': 11, fill: p.muted },
-          String(t),
-        ),
+        svg('line', {
+          x1: x(t), x2: x(t), y1: m.top, y2: m.top + rowH * groups.length,
+          stroke: p.grid, 'stroke-width': 1,
+        }),
+        svg('text', { x: x(t), y: height - 12, 'text-anchor': 'middle', 'font-size': 11, fill: p.muted }, String(t)),
       ),
     ),
     ...groups.map((g, gi) => {
@@ -316,46 +317,25 @@ function distribution(rows, width, segKey = 'drive') {
       return svg(
         'g',
         null,
-        svg(
-          'text',
-          { x: m.left - 10, y: cy + 4, 'text-anchor': 'end', 'font-size': 11.5, fill: p.ink2 },
-          g.label,
-        ),
+        svg('text', { x: m.left - 10, y: cy + 4, 'text-anchor': 'end', 'font-size': 12, fill: p.ink2 }, g.label),
         med != null
           ? svg('line', {
-              x1: x(med),
-              x2: x(med),
-              y1: cy - 15,
-              y2: cy + 15,
-              stroke: p.ink,
-              'stroke-width': 2,
-              'stroke-linecap': 'round',
-              opacity: 0.75,
+              x1: x(med), x2: x(med), y1: cy - 17, y2: cy + 17,
+              stroke: p.ink, 'stroke-width': 2, 'stroke-linecap': 'round', opacity: 0.75,
             })
           : null,
         ...g.values.map((v, i) => {
-          // Deterministic jitter: same data always draws the same picture.
+          // Deterministic jitter: the same data always draws the same picture.
           const jitter = ((i * 7919) % 13) / 13 - 0.5;
           const c = svg('circle', {
-            cx: x(v),
-            cy: cy + jitter * 17,
-            r: 5,
-            fill: color,
-            stroke: p.surface,
-            'stroke-width': 2,
+            cx: x(v), cy: cy + jitter * 19, r: 5,
+            fill: color, stroke: p.surface, 'stroke-width': 2,
           });
-          bindTip(c, [
-            ['', g.label],
-            ['value', `${fmtMin(v)} min`],
-          ]);
+          bindTip(c, [['', `${name} · ${g.label}`], ['value', `${fmtMin(v)} min`]]);
           return c;
         }),
         med != null
-          ? svg(
-              'text',
-              { x: x(med), y: cy - 19, 'text-anchor': 'middle', 'font-size': 10, fill: p.muted },
-              `med ${med.toFixed(1)}`,
-            )
+          ? svg('text', { x: x(med), y: cy - 21, 'text-anchor': 'middle', 'font-size': 10, fill: p.muted }, `med ${med.toFixed(1)}`)
           : null,
       );
     }),
@@ -372,6 +352,11 @@ function distribution(rows, width, segKey = 'drive') {
     ]),
   );
 }
+
+const segmentSpread = (rows, width, segKey = DRIVE_KEY) =>
+  spread(rows, width, segKey, segmentLabel(segKey));
+
+const door2doorSpread = (rows, width) => spread(rows, width, 'door2door', 'Door to door');
 
 // ── chart 3: time of day vs drive ──────────────────────────────────────────
 
@@ -468,9 +453,16 @@ const CHARTS = {
     wide: true,
   },
   distribution: {
-    title: (seg) => `${segmentLabel(seg)} spread by direction`,
-    sub: () => 'Minutes. Every trip as a dot, with the median.',
-    draw: distribution,
+    title: (seg) => `${segmentLabel(seg)} spread`,
+    sub: () => 'Minutes by direction. Every trip a dot, with the median.',
+    draw: segmentSpread,
+  },
+  door2door: {
+    // Its own chart and its own scale: sharing one with a short segment
+    // squashes that segment into a few pixels.
+    title: () => 'Door to door spread',
+    sub: () => 'Minutes by direction. Every trip a dot, with the median.',
+    draw: door2doorSpread,
   },
   timeofday: {
     title: (seg) => `Departure time vs ${segmentLabel(seg).toLowerCase()}`,

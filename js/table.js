@@ -533,14 +533,6 @@ export function renderDataView() {
         : null,
     ),
 
-    rows.length === 0
-      ? h('div', { class: 'empty' }, 'No trips match these filters.')
-      : cols.length === 0
-        ? h('div', { class: 'empty' }, 'No columns selected.')
-        : wide
-          ? dataTable(rows, cols)
-          : cardList(rows, cols),
-
     // Which segment type the spread chart plots. Anything else uses its own.
     h(
       'div',
@@ -567,5 +559,18 @@ export function renderDataView() {
       { class: wide ? 'charts-grid' : '', style: { marginTop: '12px' } },
       ...CHART_KEYS.map((k) => chartCard(k, rows, { segment: chartSegment })),
     ),
+
+    h(
+      'div',
+      { class: 'field-label', style: { marginTop: '20px', marginBottom: '8px' } },
+      `Trips (${rows.length})`,
+    ),
+    rows.length === 0
+      ? h('div', { class: 'empty' }, 'No trips match these filters.')
+      : cols.length === 0
+        ? h('div', { class: 'empty' }, 'No columns selected.')
+        : wide
+          ? dataTable(rows, cols)
+          : cardList(rows, cols),
   );
 }
