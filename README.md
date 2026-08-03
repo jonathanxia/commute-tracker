@@ -1,3 +1,5 @@
+\/ Wow readme reads just like Claude. blegh.
+
 # Commute Logger
 
 A personal iPhone web app for timing a commute, segment by segment. Replaces hitting "lap"
