@@ -48,7 +48,7 @@ import { renderDataView } from './table.js';
 // state
 // ---------------------------------------------------------------------------
 
-export const BUILD = 'v9';
+export const BUILD = 'v10';
 
 export const state = {
   trips: [],
@@ -1079,6 +1079,37 @@ function backupView() {
         : null,
     ),
 
+    h(
+      'div',
+      { class: 'card' },
+      h('div', { class: 'eyebrow' }, 'App version'),
+      h(
+        'div',
+        { class: 'muted', style: { fontSize: '13px', margin: '6px 0 12px' } },
+        `Running ${BUILD}. The app updates itself on launch when it has signal; ` +
+          'this forces the check now.',
+      ),
+      h(
+        'button',
+        {
+          class: 'btn',
+          type: 'button',
+          onclick: async () => {
+            try {
+              const regs = await navigator.serviceWorker.getRegistrations();
+              await Promise.all(regs.map((r) => r.update()));
+              await Promise.all((await caches.keys()).map((k) => caches.delete(k)));
+              toast('Reloading…');
+              setTimeout(() => location.reload(), 400);
+            } catch {
+              toast('Update check failed');
+            }
+          },
+        },
+        'Check for updates',
+      ),
+    ),
+
     restoreCard(),
   );
 }
@@ -1324,7 +1355,20 @@ async function boot() {
   // app still works there, just without offline caching.
   if ('serviceWorker' in navigator && window.isSecureContext) {
     try {
-      await navigator.serviceWorker.register('sw.js');
+      // Cache-first means a launch shows the OLD files while the new ones
+      // download, so without this the app takes two launches to update and
+      // looks stuck on a stale build. The worker calls skipWaiting(), so a new
+      // version activates during this session; when it takes control, reload
+      // once so the running page is actually the version in the cache.
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloading = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController || reloading) return;
+        reloading = true;
+        location.reload();
+      });
+      const reg = await navigator.serviceWorker.register('sw.js');
+      reg.update().catch(() => {});
     } catch {
       /* not fatal */
     }
