@@ -5,7 +5,7 @@
 import { chronological, columnTypes, loadCommuteTypes, segmentLabel, tripView } from './store.js';
 import { dateKey, dowOf, fmtClock, fmtMin, fmtSigned } from './format.js';
 import { h } from './dom.js';
-import { CHART_KEYS, chartCard, chartWantsSegment } from './charts.js';
+import { CHART_KEYS, chartCard } from './charts.js';
 import { exportTrips, go, render, state, toast, updatePrefs } from './app.js';
 
 const DOWS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -545,7 +545,7 @@ export function renderDataView() {
     h(
       'div',
       { class: 'row wrap gap-sm', style: { marginTop: '16px', marginBottom: '4px' } },
-      h('span', { class: 'field-label', style: { alignSelf: 'center' } }, 'Chart segment'),
+      h('span', { class: 'field-label', style: { alignSelf: 'center' } }, 'Charts show'),
       ...columnTypes(state.trips).map((key) =>
         h(
           'button',
@@ -565,9 +565,7 @@ export function renderDataView() {
     h(
       'div',
       { class: wide ? 'charts-grid' : '', style: { marginTop: '12px' } },
-      ...CHART_KEYS.map((k) =>
-        chartCard(k, rows, chartWantsSegment(k) ? { segment: chartSegment } : {}),
-      ),
+      ...CHART_KEYS.map((k) => chartCard(k, rows, { segment: chartSegment })),
     ),
   );
 }

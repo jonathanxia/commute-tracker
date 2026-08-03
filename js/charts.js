@@ -6,7 +6,7 @@
 
 import { h, svg } from './dom.js';
 import { fmtClock, fmtMin, fmtSigned } from './format.js';
-import { segmentLabel } from './store.js';
+import { DRIVE_KEY, segmentLabel } from './store.js';
 
 /** Read the palette from CSS so styles.css stays the single source of truth. */
 function palette() {
@@ -25,6 +25,16 @@ function palette() {
 }
 
 const dirColor = (p, d) => (d === 'east' ? p.east : p.west);
+
+/** Minutes for a segment key on a row. 'door2door' is the derived total. */
+const segValue = (r, key) => (key === 'door2door' ? r.door2door : r.min?.[key]);
+
+/**
+ * The Google prediction only means anything against the drive segment — it is a
+ * predicted DRIVE time. Overlaying it on a walk or a garage wait would be
+ * comparing unrelated quantities, so it appears for that segment only.
+ */
+const showsPrediction = (key) => key === DRIVE_KEY;
 
 // ── tooltip ────────────────────────────────────────────────────────────────
 
@@ -135,10 +145,12 @@ function emptyNote(text) {
   return h('div', { class: 'empty', style: { padding: '28px 10px' } }, text);
 }
 
-// ── chart 1: drive time per trip, chronological ────────────────────────────
+// ── chart 1: segment time per trip, chronological ──────────────────────────
 
-function driveBars(rows, width) {
+function segmentBars(rows, width, segKey = DRIVE_KEY) {
   const p = palette();
+  const segName = segmentLabel(segKey);
+  const withPrediction = showsPrediction(segKey);
   const height = 250;
   const m = { top: 14, right: 10, bottom: 34, left: 34 };
   const iw = Math.max(60, width - m.left - m.right);
@@ -146,10 +158,16 @@ function driveBars(rows, width) {
 
   // Always chronological, whatever the table happens to be sorted by — this is
   // a time series, and reading it right to left would be a lie.
-  const data = rows.filter((r) => r.drive != null).sort((a, b) => a.depart_ts - b.depart_ts);
-  if (!data.length) return emptyNote('No drive times in this selection.');
+  const data = rows
+    .filter((r) => segValue(r, segKey) != null)
+    .sort((a, b) => a.depart_ts - b.depart_ts);
+  if (!data.length) return emptyNote(`No ${segName.toLowerCase()} times in this selection.`);
 
-  const max = Math.max(...data.map((r) => Math.max(r.drive, r.gmaps_pred_min ?? 0)));
+  const max = Math.max(
+    ...data.map((r) =>
+      Math.max(segValue(r, segKey), withPrediction ? r.gmaps_pred_min ?? 0 : 0),
+    ),
+  );
   const ticks = niceTicks(max);
   const top = ticks[ticks.length - 1];
   const y = (v) => m.top + ih - (v / top) * ih;
@@ -166,12 +184,13 @@ function driveBars(rows, width) {
     yAxis(p, { x0: m.left, x1: m.left + iw, y, ticks }),
     ...data.map((r, i) => {
       const x = m.left + band * i + (band - bw) / 2;
-      const hgt = Math.max(1, y(0) - y(r.drive));
+      const value = segValue(r, segKey);
+      const hgt = Math.max(1, y(0) - y(value));
       const g = svg(
         'g',
         null,
-        svg('path', { d: barPath(x, y(r.drive), bw, hgt), fill: dirColor(p, r.direction) }),
-        r.gmaps_pred_min != null
+        svg('path', { d: barPath(x, y(value), bw, hgt), fill: dirColor(p, r.direction) }),
+        withPrediction && r.gmaps_pred_min != null
           ? svg('line', {
               x1: x - 3,
               x2: x + bw + 3,
@@ -188,9 +207,13 @@ function driveBars(rows, width) {
       );
       bindTip(g, [
         ['', `${r.dow} ${r.date} ${fmtClock(r.depart_ts)}`],
-        ['drive', `${fmtMin(r.drive)} min`],
-        ['google', r.gmaps_pred_min == null ? '—' : `${r.gmaps_pred_min} min`],
-        ['diff', r.drive_residual == null ? '—' : `${fmtSigned(r.drive_residual)} min`],
+        [segName.toLowerCase(), `${fmtMin(value)} min`],
+        ...(withPrediction
+          ? [
+              ['google', r.gmaps_pred_min == null ? '—' : `${r.gmaps_pred_min} min`],
+              ['diff', r.drive_residual == null ? '—' : `${fmtSigned(r.drive_residual)} min`],
+            ]
+          : []),
       ]);
       return g;
     }),
@@ -226,7 +249,10 @@ function driveBars(rows, width) {
     legend([
       { color: p.east, label: 'East (→ office)' },
       { color: p.west, label: 'West (→ home)' },
-      { color: p.ink2, label: 'Google prediction', line: true, dashed: true },
+      // Only meaningful against the drive segment.
+      ...(withPrediction
+        ? [{ color: p.ink2, label: 'Google prediction', line: true, dashed: true }]
+        : []),
     ]),
   );
 }
@@ -243,7 +269,6 @@ function median(xs) {
 function distribution(rows, width, segKey = 'drive') {
   const p = palette();
   const segName = segmentLabel(segKey);
-  const pick = (r, key) => (key === 'door2door' ? r.door2door : r.min?.[key]);
   const groups = [
     { key: segKey, dir: 'east', label: `${segName} · East` },
     { key: segKey, dir: 'west', label: `${segName} · West` },
@@ -252,8 +277,8 @@ function distribution(rows, width, segKey = 'drive') {
   ].map((g) => ({
     ...g,
     values: rows
-      .filter((r) => r.direction === g.dir && pick(r, g.key) != null)
-      .map((r) => pick(r, g.key)),
+      .filter((r) => r.direction === g.dir && segValue(r, g.key) != null)
+      .map((r) => segValue(r, g.key)),
   }));
 
   const all = groups.flatMap((g) => g.values);
@@ -350,15 +375,16 @@ function distribution(rows, width, segKey = 'drive') {
 
 // ── chart 3: time of day vs drive ──────────────────────────────────────────
 
-function timeOfDay(rows, width) {
+function timeOfDay(rows, width, segKey = DRIVE_KEY) {
   const p = palette();
+  const segName = segmentLabel(segKey);
   const height = 250;
   const m = { top: 14, right: 14, bottom: 34, left: 34 };
   const iw = Math.max(60, width - m.left - m.right);
   const ih = height - m.top - m.bottom;
 
-  const data = rows.filter((r) => r.drive != null);
-  if (!data.length) return emptyNote('No drive times in this selection.');
+  const data = rows.filter((r) => segValue(r, segKey) != null);
+  if (!data.length) return emptyNote(`No ${segName.toLowerCase()} times in this selection.`);
 
   const mins = data.map((r) => {
     const d = new Date(r.depart_ts);
@@ -368,7 +394,7 @@ function timeOfDay(rows, width) {
   const hi = Math.min(1440, Math.max(...mins) + 45);
   const x = (v) => m.left + ((v - lo) / Math.max(1, hi - lo)) * iw;
 
-  const maxY = Math.max(...data.map((r) => r.drive));
+  const maxY = Math.max(...data.map((r) => segValue(r, segKey)));
   const ticks = niceTicks(maxY);
   const top = ticks[ticks.length - 1];
   const y = (v) => m.top + ih - (v / top) * ih;
@@ -396,7 +422,7 @@ function timeOfDay(rows, width) {
     ...data.map((r, i) => {
       const c = svg('circle', {
         cx: x(mins[i]),
-        cy: y(r.drive),
+        cy: y(segValue(r, segKey)),
         r: 5.5,
         fill: dirColor(p, r.direction),
         stroke: p.surface,
@@ -405,8 +431,10 @@ function timeOfDay(rows, width) {
       bindTip(c, [
         ['', `${r.dow} ${r.date}`],
         ['left', fmtClock(r.depart_ts)],
-        ['drive', `${fmtMin(r.drive)} min`],
-        ['diff', r.drive_residual == null ? '—' : `${fmtSigned(r.drive_residual)} min`],
+        [segName.toLowerCase(), `${fmtMin(segValue(r, segKey))} min`],
+        ...(showsPrediction(segKey)
+          ? [['diff', r.drive_residual == null ? '—' : `${fmtSigned(r.drive_residual)} min`]]
+          : []),
       ]);
       return c;
     }),
@@ -426,22 +454,27 @@ function timeOfDay(rows, width) {
 
 // ── mounting ───────────────────────────────────────────────────────────────
 
+// Every chart plots the selected segment. Titles and subtitles are functions of
+// that selection, so they can never claim to show one thing while plotting
+// another. The Google prediction is drive-only and the copy says so only there.
 const CHARTS = {
-  drive: {
-    title: 'Drive time per trip',
-    sub: 'Minutes, chronological. Dashed tick is what Google predicted.',
-    draw: driveBars,
+  segment: {
+    title: (seg) => `${segmentLabel(seg)} per trip`,
+    sub: (seg) =>
+      showsPrediction(seg)
+        ? 'Minutes, chronological. Dashed tick is what Google predicted.'
+        : 'Minutes, chronological.',
+    draw: segmentBars,
     wide: true,
   },
   distribution: {
-    title: 'Spread by direction',
-    sub: 'Minutes. Every trip as a dot, with the median.',
+    title: (seg) => `${segmentLabel(seg)} spread by direction`,
+    sub: () => 'Minutes. Every trip as a dot, with the median.',
     draw: distribution,
-    segmentPicker: true,
   },
   timeofday: {
-    title: 'Departure time vs drive',
-    sub: 'Drive minutes vs when you left. Does leaving later help?',
+    title: (seg) => `Departure time vs ${segmentLabel(seg).toLowerCase()}`,
+    sub: (seg) => `${segmentLabel(seg)} minutes vs when you left. Does leaving later help?`,
     draw: timeOfDay,
   },
 };
@@ -452,12 +485,13 @@ const CHARTS = {
  */
 export function chartCard(key, rows, opts = {}) {
   const spec = CHARTS[key];
+  const seg = opts.segment || DRIVE_KEY;
   const holder = h('div', { style: { marginTop: '10px' } });
   const card = h(
     'div',
     { class: `card chart-card${spec.wide ? ' span-2' : ''}` },
-    h('div', { class: 'chart-title' }, spec.title),
-    h('div', { class: 'chart-sub' }, spec.sub),
+    h('div', { class: 'chart-title' }, spec.title(seg)),
+    h('div', { class: 'chart-sub' }, spec.sub(seg)),
     holder,
   );
 
@@ -467,7 +501,7 @@ export function chartCard(key, rows, opts = {}) {
     if (w <= 0 || Math.abs(w - last) < 2) return;
     last = w;
     try {
-      holder.replaceChildren(spec.draw(rows, w, opts.segment));
+      holder.replaceChildren(spec.draw(rows, w, seg));
     } catch (err) {
       // A throw inside a ResizeObserver callback is easy to lose; make it loud
       // and leave a visible note rather than a silently blank card.
@@ -485,4 +519,3 @@ export function chartCard(key, rows, opts = {}) {
 }
 
 export const CHART_KEYS = Object.keys(CHARTS);
-export const chartWantsSegment = (key) => CHARTS[key]?.segmentPicker === true;
