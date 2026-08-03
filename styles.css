@@ -64,11 +64,17 @@ html, body {
 body {
   display: flex;
   flex-direction: column;
-  /* Inset the whole column, not the scrolling pane: content can then never
-     slide under the status bar, while the web view itself still covers the
-     full screen so the tab bar reaches the physical bottom edge. */
+  /* Keep content clear of the status bar.
+     iOS reports the DEVICE's insets through env() even when the web view is
+     already inset and does not reach under the status bar. Padding by env()
+     unconditionally then double-counts and wastes that much space at the top of
+     every screen. app.js measures whether the viewport actually covers the
+     screen and flips the attribute below when it does not. */
   padding-top: var(--safe-top);
 }
+
+/* Viewport already starts below the status bar — no padding needed. */
+html[data-inset-top='true'] body { padding-top: 0; }
 
 /* Kill the iOS tap-highlight flash; we draw our own :active states. */
 button, a, .tap { -webkit-tap-highlight-color: transparent; }
