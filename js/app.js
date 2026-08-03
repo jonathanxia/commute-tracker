@@ -48,7 +48,7 @@ import { renderDataView } from './table.js';
 // state
 // ---------------------------------------------------------------------------
 
-export const BUILD = 'v10';
+export const BUILD = 'v11';
 
 export const state = {
   trips: [],
@@ -604,18 +604,8 @@ function layoutReport() {
   );
 }
 
-/**
- * Decide whether the web view actually reaches under the status bar.
- *
- * On the phone this reads: view 430x873, screen 430x932, safe 59/34 — the
- * viewport is already inset by exactly the top inset, yet env() still reports
- * 59. Padding by env() as well would waste 59pt at the top of every screen.
- */
+/** Keep the footer diagnostic honest after a rotate or a resize. */
 function syncInsetCompensation() {
-  const coversScreen = window.innerHeight >= (screen.height || window.innerHeight) - 1;
-  document.documentElement.dataset.insetTop = String(!coversScreen);
-  // The footer diagnostic is measured at render time, so re-render it once the
-  // viewport settles — otherwise it can report numbers from mid-layout.
   if (state.route.name === 'history') render();
 }
 

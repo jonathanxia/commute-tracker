@@ -64,17 +64,12 @@ html, body {
 body {
   display: flex;
   flex-direction: column;
-  /* Keep content clear of the status bar.
-     iOS reports the DEVICE's insets through env() even when the web view is
-     already inset and does not reach under the status bar. Padding by env()
-     unconditionally then double-counts and wastes that much space at the top of
-     every screen. app.js measures whether the viewport actually covers the
-     screen and flips the attribute below when it does not. */
+  /* Always pad by the top inset. Do NOT try to be clever and skip this based
+     on comparing innerHeight to screen.height — the viewport can be shorter
+     than the screen while still starting at y=0, in which case skipping the
+     padding puts the header underneath the status bar. */
   padding-top: var(--safe-top);
 }
-
-/* Viewport already starts below the status bar — no padding needed. */
-html[data-inset-top='true'] body { padding-top: 0; }
 
 /* Kill the iOS tap-highlight flash; we draw our own :active states. */
 button, a, .tap { -webkit-tap-highlight-color: transparent; }
