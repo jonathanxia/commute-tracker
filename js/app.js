@@ -48,7 +48,7 @@ import { renderDataView } from './table.js';
 // state
 // ---------------------------------------------------------------------------
 
-export const BUILD = 'v14';
+export const BUILD = 'v15';
 
 export const state = {
   trips: [],
@@ -615,8 +615,17 @@ function layoutReport() {
   );
 }
 
-/** Keep the footer diagnostic honest after a rotate or a resize. */
+/**
+ * Flag the case where the web view is shorter than the screen.
+ *
+ * Measured on the phone: view 430x873 on a 430x932 screen, safe 59/34, bar
+ * 873/873. The bar is already at the bottom of everything CSS can address, and
+ * the home indicator is outside the viewport entirely — so the bar's 34pt
+ * bottom inset is padding for something that isn't there.
+ */
 function syncInsetCompensation() {
+  const short = window.innerHeight < (screen.height || window.innerHeight) - 1;
+  document.documentElement.dataset.shortViewport = String(short);
   if (state.route.name === 'history') render();
 }
 

@@ -48,6 +48,13 @@
    in a home-screen PWA iOS strands fixed elements at a stale offset once the
    page scrolls or a date-picker keyboard opens and closes, which leaves the bar
    floating in the middle of the screen. Normal flow can't do that. */
+html {
+  /* The canvas colour. When the web view is shorter than the screen, this is
+     what shows in the strip below it — matching the tab bar makes that strip
+     read as part of the bar rather than a black band under a floating one. */
+  background: var(--surface);
+}
+
 html, body {
   margin: 0;
   padding: 0;
@@ -56,10 +63,13 @@ html, body {
   height: 100%;
   height: 100dvh;
   overflow: hidden;
-  background: var(--plane);
   color: var(--ink);
   -webkit-text-size-adjust: 100%;
 }
+
+/* Page background lives on body only — html keeps the bar colour above, so the
+   two are not fighting over the canvas. */
+body { background: var(--plane); }
 
 body {
   display: flex;
@@ -70,6 +80,11 @@ body {
      padding puts the header underneath the status bar. */
   padding-top: var(--safe-top);
 }
+
+/* The web view does not reach the bottom of the screen, so the home indicator
+   sits outside it. Padding the tab bar for an inset that is not inside our
+   viewport only adds dead space inside the bar. */
+html[data-short-viewport='true'] .tabbar { padding-bottom: 0; }
 
 /* Kill the iOS tap-highlight flash; we draw our own :active states. */
 button, a, .tap { -webkit-tap-highlight-color: transparent; }
