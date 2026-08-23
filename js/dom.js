@@ -51,7 +51,6 @@ function append(node, children) {
 }
 
 export const $ = (sel, root = document) => root.querySelector(sel);
-export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 export function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);

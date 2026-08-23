@@ -113,8 +113,3 @@ pd.json_normalize(d["trips"], "segments", ["date", "direction", "commute_type"])
 The app updates itself on launch when it has signal. To force it: **History → Export → Check
 for updates**. The current build is shown at the bottom of History.
 
-## Verifying the seed data
-
-`verify.html` re-derives every value from `seed.local.json` and diffs it against the source
-table, to prove nothing drifts. `seed.local.json` is gitignored — real trips never get
-committed. See `seed.example.json` for the format.

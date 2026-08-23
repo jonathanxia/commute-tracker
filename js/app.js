@@ -38,9 +38,8 @@ import {
   saveTrips,
   normalizeTrip,
 } from './store.js';
-import { fetchSeed, rowsToTrips } from './seed.js';
 import { dateKey, fmtElapsed, fmtMin, fmtMinHuman, fmtSigned, dowOf, fmtClock } from './format.js';
-import { $, clear, h, mount } from './dom.js';
+import { $, h, mount } from './dom.js';
 import { renderTripEditor, renderManualAdd } from './editor.js';
 import { renderDataView } from './table.js';
 
@@ -48,7 +47,7 @@ import { renderDataView } from './table.js';
 // state
 // ---------------------------------------------------------------------------
 
-export const BUILD = 'v15';
+export const BUILD = 'v16';
 
 export const state = {
   trips: [],
@@ -1336,17 +1335,6 @@ export function render() {
 async function boot() {
   state.trips = loadTrips();
   state.active = loadActive();
-
-  // Seed only on a genuinely fresh install, and only once — deleting every trip
-  // on purpose should not resurrect them on the next launch.
-  if (!state.trips.length && !state.prefs.seeded) {
-    const seed = await fetchSeed();
-    if (seed) {
-      state.trips = rowsToTrips(seed.rows);
-      commitTrips();
-    }
-    updatePrefs({ seeded: true });
-  }
 
   if (state.active) state.route = { name: state.active.finished ? 'review' : 'track' };
   render();

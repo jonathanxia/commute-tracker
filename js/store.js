@@ -1,8 +1,5 @@
 // Model, derivations and persistence.
 //
-// DOM-free on purpose: tools/verify-seed.mjs imports this outside a browser to
-// prove the CSV export reproduces the seed table.
-//
 // The one rule everything else hangs off: timestamps (epoch ms) are the only
 // source of truth. Nothing here ever persists an elapsed counter, because iOS
 // suspends the app when the phone is locked and a counter would freeze or drift.
@@ -10,20 +7,13 @@
 
 import { dateKey, dowOf } from './format.js';
 
-// The segment vocabulary is user data, not a constant. Everything downstream —
-// CSV columns, table columns, the manual-entry form, the relabel chips — is
-// generated from it, so adding a type is one action in the UI rather than eight
-// edits across five files.
+// The segment vocabulary is user data, not a constant. The table columns, the
+// manual-entry fields, the relabel pills and the export all generate from it, so
+// adding a type is one action in the UI rather than an edit in every consumer.
 //
-// A type has a STABLE key and an editable label. Trips store the key, so
-// renaming "Garage wait" to "Valet" never touches a single stored trip.
-
-// One name per type, used everywhere: the pill, the big label on the recorder,
-// the table header and the CSV header. There is no second "column name" to keep
-// in sync, because maintaining a mapping is work with nothing to show for it.
-//
-// `key` is derived from the name once, at creation, and never shown or typed.
-// It exists only so renaming a type doesn't have to rewrite stored trips.
+// One name per type, used everywhere. `key` is derived from that name once, at
+// creation, and is never shown or typed — it exists only so renaming a type
+// doesn't have to rewrite every stored trip.
 export const BUILTIN_TYPES = [
   { key: 'walk_to_car', label: 'Walk to car' },
   { key: 'garage_wait', label: 'Garage wait' },
@@ -123,9 +113,6 @@ export function segmentTypes() {
 export function segmentLabel(key) {
   return loadTypes().find((t) => t.key === key)?.label ?? humanizeKey(key);
 }
-
-/** Kept as an alias: the display name is also the column name. */
-export const segmentShort = segmentLabel;
 
 /** Types flagged this way are recorded and exported but left out of door2door. */
 export function typeExcluded(key) {
@@ -438,12 +425,6 @@ export function residualMin(trip) {
   return drive - trip.gmaps_pred_min;
 }
 
-/** Minutes of wall clock the trip spans, used only for display sanity. */
-export function spanMin(trip) {
-  const end = arriveTs(trip);
-  return end == null ? null : (end - trip.depart_ts) / 60000;
-}
-
 /**
  * Non-contiguous boundaries between consecutive segments. Surfaced to the user
  * as a note; never auto-corrected, because a gap can be a real pause and the
@@ -603,7 +584,6 @@ export const DEFAULT_PREFS = {
   chart: 'drive',
   lastBackupAt: null,
   backupNagDismissedAt: null,
-  seeded: false,
 };
 
 export function loadPrefs() {
