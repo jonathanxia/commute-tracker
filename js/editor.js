@@ -46,10 +46,13 @@ function timeField(label, ts, anchorTs, apply, { allowClear = false } = {}) {
     h('input', {
       class: 'input-sm',
       type: 'text',
-      inputmode: 'numeric',
+      // decimal, not numeric: the iOS digit pad has no colon, so the period is
+      // the only separator reachable from it — parseClockStr reads 8.45 as
+      // 8:45, and bare digits (845, 84530) need no separator at all.
+      inputmode: 'decimal',
       autocomplete: 'off',
       enterkeyhint: 'done',
-      placeholder: 'e.g. 8:45:30',
+      placeholder: '845 or 8.45',
       value: fmtClockTyped(ts),
       onchange: (e) => {
         const raw = e.target.value.trim();
@@ -62,7 +65,7 @@ function timeField(label, ts, anchorTs, apply, { allowClear = false } = {}) {
         const clockMs = parseClockStr(raw);
         if (clockMs == null) {
           e.target.classList.add('invalid');
-          toast(`Couldn't read “${raw}” as a time — try 8:45 or 845`);
+          toast(`Couldn't read “${raw}” as a time — try 845 or 8.45`);
           return;
         }
         apply(tsAtClock(anchorTs(), clockMs));
@@ -499,10 +502,10 @@ export function renderManualAdd() {
             h('input', {
               class: 'input-sm',
               type: 'text',
-              inputmode: 'numeric',
+              inputmode: 'decimal', // digit pad has no colon; 845 and 8.45 both parse
               autocomplete: 'off',
               enterkeyhint: 'done',
-              placeholder: 'e.g. 8:45',
+              placeholder: '845 or 8.45',
               value: draft.time,
               onchange: (e) => {
                 draft.time = e.target.value.trim();

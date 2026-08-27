@@ -5,7 +5,7 @@
 // Bump CACHE_VERSION whenever you change any file below, or the phone will keep
 // serving the old copy.
 
-const CACHE_VERSION = 'commute-v17';
+const CACHE_VERSION = 'commute-v18';
 
 const SHELL = [
   '.',
