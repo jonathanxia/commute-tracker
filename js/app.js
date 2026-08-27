@@ -47,7 +47,7 @@ import { renderDataView } from './table.js';
 // state
 // ---------------------------------------------------------------------------
 
-export const BUILD = 'v16';
+export const BUILD = 'v17';
 
 export const state = {
   trips: [],

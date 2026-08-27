@@ -74,21 +74,45 @@ export function fmtMinHuman(min) {
   return s === 0 ? `${m}m` : `${m}m ${pad(s)}s`;
 }
 
-/** Timestamp -> value for <input type="datetime-local" step="1">. */
-export function tsToInput(ts) {
-  if (ts == null) return '';
-  const d = new Date(ts);
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-  );
+/** Clock time for the typed time fields: HH:MM, with :SS only when nonzero. */
+export function fmtClockTyped(ts) {
+  if (ts == null || !Number.isFinite(ts)) return '';
+  const d = new Date(Math.round(ts / 1000) * 1000);
+  const base = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return d.getSeconds() ? `${base}:${pad(d.getSeconds())}` : base;
 }
 
-/** <input type="datetime-local"> value -> timestamp. Returns null if unparseable. */
-export function inputToTs(value) {
-  if (!value) return null;
-  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
-  if (!m) return null;
-  const [, y, mo, d, h, mi, s] = m;
-  return new Date(+y, +mo - 1, +d, +h, +mi, +(s || 0)).getTime();
+/**
+ * Lenient typed clock time -> ms since local midnight, or null if unreadable.
+ * Accepts "8:45", "08:45:30", "845", "84530", "8.45", "8 45", "8:45pm", "845a".
+ * Bare 1–2 digits are an hour on the dot ("8" -> 08:00).
+ */
+export function parseClockStr(value) {
+  if (value == null) return null;
+  let s = String(value).trim().toLowerCase();
+  const ampm = s.match(/\s*([ap])\.?m?\.?$/);
+  if (ampm) s = s.slice(0, ampm.index).trim();
+  let h, m, sec = 0;
+  const parts = s.match(/^(\d{1,2})[:. ](\d{1,2})(?:[:. ](\d{1,2}))?$/);
+  if (parts) {
+    [h, m, sec] = [+parts[1], +parts[2], +(parts[3] ?? 0)];
+  } else if (/^\d{1,6}$/.test(s)) {
+    if (s.length <= 2) [h, m] = [+s, 0];
+    else if (s.length <= 4) [h, m] = [+s.slice(0, -2), +s.slice(-2)];
+    else [h, m, sec] = [+s.slice(0, -4), +s.slice(-4, -2), +s.slice(-2)];
+  } else return null;
+  if (ampm) {
+    if (h < 1 || h > 12) return null;
+    if (ampm[1] === 'p' && h !== 12) h += 12;
+    else if (ampm[1] === 'a' && h === 12) h = 0;
+  }
+  if (h > 23 || m > 59 || sec > 59) return null;
+  return ((h * 60 + m) * 60 + sec) * 1000;
+}
+
+/** The timestamp at clockMs past local midnight on the same day as anchorTs. */
+export function tsAtClock(anchorTs, clockMs) {
+  const d = new Date(anchorTs);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime() + clockMs;
 }

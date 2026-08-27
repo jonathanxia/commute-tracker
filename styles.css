@@ -117,7 +117,6 @@ h2 { font-size: 15px; }
 }
 
 .muted { color: var(--muted); }
-.dim { color: var(--ink-2); }
 .num { font-variant-numeric: tabular-nums; }
 .blank { color: #4a5666; }
 
@@ -228,6 +227,8 @@ input:focus, select:focus, textarea:focus {
 textarea { min-height: 110px; resize: vertical; font-size: 13px; font-family: ui-monospace, Menlo, monospace; }
 
 .input-sm { min-height: 36px; padding: 6px 8px; font-size: 15px; border-radius: 8px; }
+.input-sm.invalid { border-color: var(--bad); }
+.input-sm.invalid:focus { outline-color: var(--bad); }
 
 /* segmented control */
 .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 11px; padding: 3px; gap: 3px; }
@@ -458,19 +459,15 @@ textarea { min-height: 110px; resize: vertical; font-size: 13px; font-family: ui
   margin-bottom: 8px;
 }
 
-/* Single column on narrow phones: a datetime-local input needs the full width
-   or the date and time halves get visually truncated. */
+/* Two columns everywhere: the typed time fields are short, so Start/End fit
+   side by side even on narrow phones. */
 .seg-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-top: 8px;
 }
 .seg-grid .full { grid-column: 1 / -1; }
-
-@media (min-width: 430px) {
-  .seg-grid { grid-template-columns: 1fr 1fr; }
-}
 
 .issue {
   font-size: 12px;

@@ -22,12 +22,53 @@ import {
   tripFromDurations,
   guessDirection,
 } from './store.js';
-import { dateKey, dowOf, fmtClock, fmtMin, fmtMinHuman, fmtSigned, inputToTs, tsToInput, dateStrToTs } from './format.js';
+import { dateKey, dowOf, fmtClock, fmtClockTyped, fmtMin, fmtMinHuman, fmtSigned, parseClockStr, tsAtClock, dateStrToTs } from './format.js';
 import { h } from './dom.js';
 import { commuteTypePicker, go, render, state, toast, upsertTrip } from './app.js';
 
 function field(label, input) {
   return h('label', { class: 'field grow' }, h('span', { class: 'field-label' }, label), input);
+}
+
+/**
+ * Typed time-of-day field. Deliberately a plain text input, not a native time
+ * picker: the picker wheels commit whatever value the scroll lands on
+ * mid-gesture, and can't take seconds. Accepts anything parseClockStr does.
+ * The day half of the timestamp comes from anchorTs() at parse time.
+ *
+ * apply(ts) receives the new timestamp (null when cleared, if allowClear) and
+ * is responsible for committing. Unreadable text marks the field and commits
+ * nothing, so a typo can be fixed in place instead of clobbering the value.
+ */
+function timeField(label, ts, anchorTs, apply, { allowClear = false } = {}) {
+  return field(
+    label,
+    h('input', {
+      class: 'input-sm',
+      type: 'text',
+      inputmode: 'numeric',
+      autocomplete: 'off',
+      enterkeyhint: 'done',
+      placeholder: 'e.g. 8:45:30',
+      value: fmtClockTyped(ts),
+      onchange: (e) => {
+        const raw = e.target.value.trim();
+        e.target.classList.remove('invalid');
+        if (raw === '') {
+          if (allowClear) apply(null);
+          else e.target.value = fmtClockTyped(ts);
+          return;
+        }
+        const clockMs = parseClockStr(raw);
+        if (clockMs == null) {
+          e.target.classList.add('invalid');
+          toast(`Couldn't read “${raw}” as a time — try 8:45 or 845`);
+          return;
+        }
+        apply(tsAtClock(anchorTs(), clockMs));
+      },
+    }),
+  );
 }
 
 function directionToggle(value, onChange) {
@@ -106,7 +147,20 @@ export function renderTripEditor(trip, opts) {
             type: 'date',
             value: trip.date,
             onchange: (e) => {
-              if (e.target.value) trip.date = e.target.value;
+              // Moving the date moves every timestamp with it. The time fields
+              // are clock-only, so this is the one control that owns the day;
+              // timestamps left behind on the old day would be invisible.
+              if (e.target.value) {
+                const delta = dateStrToTs(e.target.value) - dateStrToTs(trip.date);
+                trip.date = e.target.value;
+                if (delta) {
+                  if (trip.depart_ts != null) trip.depart_ts += delta;
+                  for (const s of trip.segments) {
+                    if (s.start_ts != null) s.start_ts += delta;
+                    if (s.end_ts != null) s.end_ts += delta;
+                  }
+                }
+              }
               commit();
             },
           }),
@@ -130,22 +184,15 @@ export function renderTripEditor(trip, opts) {
         h(
           'div',
           { class: 'full' },
-          field(
+          timeField(
             'Departed',
-            h('input', {
-              class: 'input-sm',
-              type: 'datetime-local',
-              step: '1',
-              value: tsToInput(trip.depart_ts),
-              onchange: (e) => {
-                const ts = inputToTs(e.target.value);
-                if (ts != null) {
-                  trip.depart_ts = ts;
-                  trip.date = dateKey(ts);
-                }
-                commit();
-              },
-            }),
+            trip.depart_ts,
+            () => trip.depart_ts ?? dateStrToTs(trip.date),
+            (ts) => {
+              trip.depart_ts = ts;
+              trip.date = dateKey(ts);
+              commit();
+            },
           ),
         ),
         h('div', { class: 'full row wrap' }, directionToggle(trip.direction, (d) => {
@@ -301,31 +348,30 @@ function segmentEditor(trip, seg, i, commit) {
     h(
       'div',
       { class: 'seg-grid' },
-      field(
+      timeField(
         'Start',
-        h('input', {
-          class: 'input-sm',
-          type: 'datetime-local',
-          step: '1',
-          value: tsToInput(seg.start_ts),
-          onchange: (e) => {
-            seg.start_ts = inputToTs(e.target.value);
-            commit();
-          },
-        }),
+        seg.start_ts,
+        () => seg.start_ts ?? trip.segments[i - 1]?.end_ts ?? trip.depart_ts ?? dateStrToTs(trip.date),
+        (ts) => {
+          seg.start_ts = ts;
+          commit();
+        },
+        { allowClear: true },
       ),
-      field(
+      timeField(
         'End',
-        h('input', {
-          class: 'input-sm',
-          type: 'datetime-local',
-          step: '1',
-          value: tsToInput(seg.end_ts),
-          onchange: (e) => {
-            seg.end_ts = inputToTs(e.target.value);
-            commit();
-          },
-        }),
+        seg.end_ts,
+        // Anchored to the START's day, not the end's own: with the roll-forward
+        // below, retyping a sane time always heals an end stranded on the wrong
+        // day, instead of sticking there.
+        () => seg.start_ts ?? seg.end_ts ?? trip.depart_ts ?? dateStrToTs(trip.date),
+        (ts) => {
+          // A clock time earlier than the start reads as crossing midnight.
+          if (ts != null && seg.start_ts != null && ts < seg.start_ts) ts += 86400000;
+          seg.end_ts = ts;
+          commit();
+        },
+        { allowClear: true },
       ),
       h(
         'div',
@@ -400,12 +446,12 @@ export function renderManualAdd() {
   };
 
   const create = () => {
-    const [hh, mm] = draft.time.split(':').map(Number);
-    if (!Number.isFinite(hh)) {
+    const clockMs = parseClockStr(draft.time);
+    if (clockMs == null) {
       toast('Set a departure time');
       return;
     }
-    const depart_ts = dateStrToTs(draft.date) + (hh * 60 + mm) * 60000;
+    const depart_ts = dateStrToTs(draft.date) + clockMs;
     const durations = orderFor()
       .map((type) => ({ type, minutes: draft.durations[type] === '' ? null : Number(draft.durations[type]) }))
       .filter((d) => d.minutes != null && Number.isFinite(d.minutes));
@@ -452,10 +498,15 @@ export function renderManualAdd() {
             'Departed',
             h('input', {
               class: 'input-sm',
-              type: 'time',
+              type: 'text',
+              inputmode: 'numeric',
+              autocomplete: 'off',
+              enterkeyhint: 'done',
+              placeholder: 'e.g. 8:45',
               value: draft.time,
               onchange: (e) => {
-                draft.time = e.target.value;
+                draft.time = e.target.value.trim();
+                e.target.classList.toggle('invalid', draft.time !== '' && parseClockStr(draft.time) == null);
               },
             }),
           ),
