@@ -5,7 +5,7 @@
 // Bump CACHE_VERSION whenever you change any file below, or the phone will keep
 // serving the old copy.
 
-const CACHE_VERSION = 'commute-v18';
+const CACHE_VERSION = 'commute-v19';
 
 const SHELL = [
   '.',
@@ -30,7 +30,12 @@ self.addEventListener('install', (event) => {
       .open(CACHE_VERSION)
       // addAll is atomic, so one bad path would poison the whole install.
       // Individual puts keep a typo from taking the app offline entirely.
-      .then((cache) => Promise.all(SHELL.map((url) => cache.add(url).catch(() => {}))))
+      // cache: 'no-cache' bypasses the HTTP cache — without it a fresh install
+      // right after a deploy captures up-to-10-min-stale files from GitHub
+      // Pages, and the "new" version ships old code.
+      .then((cache) =>
+        Promise.all(SHELL.map((url) => cache.add(new Request(url, { cache: 'no-cache' })).catch(() => {}))),
+      )
       .then(() => self.skipWaiting()),
   );
 });
@@ -55,7 +60,9 @@ self.addEventListener('fetch', (event) => {
   // A background revalidate picks up new versions when there is a network.
   event.respondWith(
     caches.match(request).then((hit) => {
-      const network = fetch(request)
+      // Same no-cache as install: the revalidate must reach the server, not
+      // the HTTP cache, or it "refreshes" the shell with the same stale bytes.
+      const network = fetch(request, { cache: 'no-cache' })
         .then((res) => {
           if (res && res.ok) {
             const copy = res.clone();
